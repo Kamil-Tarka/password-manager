@@ -1,0 +1,2 @@
+class DatabaseSettingsException(Exception):
+    pass
