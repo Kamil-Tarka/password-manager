@@ -1,3 +1,5 @@
 sqlalchemy
+sqlalchemy-utils
+pydantic
 cryptography
 tzdata
