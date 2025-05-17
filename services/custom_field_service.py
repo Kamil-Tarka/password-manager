@@ -4,22 +4,37 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from exceptions.exceptions import NotFoundAccountException, NotFoundCustomFieldException
 from models.models import CreateCustomFieldDTO, UpdateCustomFieldDTO
+from services.account_service import AccountService
 
 
 class CustomFieldService:
 
-    def __init__(self, db: Session, CustomField: Type):
+    def __init__(self, db: Session, CustomField: Type, Account: Type):
         self.db = db
         self.CustomField = CustomField
+        self.Account = Account
+        self._account_service = AccountService(db, Account)
 
     def get_by_id(self, id: int):
-        return self.db.query(self.CustomField).filter(self.CustomField.id == id).first()
+        custom_field = (
+            self.db.query(self.CustomField).filter(self.CustomField.id == id).first()
+        )
+        if custom_field is None:
+            raise NotFoundCustomFieldException(f"Custom field with id={id} not found")
+        return custom_field
 
     def get_all(self):
         return self.db.query(self.CustomField).all()
 
     def create(self, create_custom_field_dto: CreateCustomFieldDTO):
+        try:
+            self._account_service.get_by_id(create_custom_field_dto.account_id)
+        except NotFoundAccountException as e:
+            print(f"Error: {e}")
+            return None
+
         custom_field = self.CustomField(**create_custom_field_dto.model_dump())
         current_date = datetime.now(ZoneInfo("Europe/Warsaw"))
         custom_field.creation_date = current_date
@@ -30,7 +45,12 @@ class CustomFieldService:
         return custom_field
 
     def update(self, id: int, update_custom_field_dto: UpdateCustomFieldDTO):
-        custom_field_to_update = self.get_by_id(id)
+        try:
+            custom_field_to_update = self.get_by_id(id)
+        except NotFoundCustomFieldException as e:
+            print(f"Error: {e}")
+            return None
+
         current_date = datetime.now(ZoneInfo("Europe/Warsaw"))
         if (
             update_custom_field_dto.name
@@ -49,7 +69,12 @@ class CustomFieldService:
         return custom_field_to_update
 
     def delete(self, id: int):
-        custom_field = self.get_by_id(id)
+        try:
+            custom_field = self.get_by_id(id)
+        except NotFoundCustomFieldException as e:
+            print(f"Error {e}")
+            return False
+
         self.db.delete(custom_field)
         self.db.commit()
         return True

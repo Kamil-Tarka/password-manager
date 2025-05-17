@@ -4,3 +4,11 @@ class DatabaseSettingsException(Exception):
 
 class ToShortPasswordException(Exception):
     pass
+
+
+class NotFoundAccountException(Exception):
+    pass
+
+
+class NotFoundCustomFieldException(Exception):
+    pass

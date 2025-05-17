@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from exceptions.exceptions import NotFoundAccountException
 from models.models import CreateAccountDTO, UpdateAccountDTO
 
 
@@ -13,7 +14,10 @@ class AccountService:
         self.Account = Account
 
     def get_by_id(self, id: int):
-        return self.db.query(self.Account).filter(self.Account.id == id).first()
+        account = self.db.query(self.Account).filter(self.Account.id == id).first()
+        if account is None:
+            raise NotFoundAccountException(f"Not found account with id={id}")
+        return account
 
     def get_all(self):
         return self.db.query(self.Account).all()
@@ -29,7 +33,12 @@ class AccountService:
         return account
 
     def update(self, id: int, update_account_dto: UpdateAccountDTO):
-        account = self.get_by_id(id)
+        try:
+            account = self.get_by_id(id)
+        except NotFoundAccountException as e:
+            print(f"Error: {e}")
+            return None
+
         current_date = datetime.now(ZoneInfo("Europe/Warsaw"))
         if update_account_dto.title and account.title != update_account_dto.title:
             account.title = update_account_dto.title
@@ -63,7 +72,12 @@ class AccountService:
         return account
 
     def delete(self, id: int):
-        account = self.get_by_id(id)
+        try:
+            account = self.get_by_id(id)
+        except NotFoundAccountException as e:
+            print(f"Error: {e}")
+            return False
+
         self.db.delete(account)
         self.db.commit()
         return True

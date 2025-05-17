@@ -1,6 +1,8 @@
 import contextlib
+import re
 from typing import Generator
 
+import pyperclip
 from sqlalchemy.orm import Session
 
 from database_settings import Base, SessionLocal, engine
@@ -24,3 +26,31 @@ def create_database(secret_key: str):
     Base.metadata.create_all(bind=engine)
 
     return Account, CustomField
+
+
+def check_password_strength(password: str) -> str:
+    if len(password) < 8:
+        return "Weak"
+
+    has_upper = bool(re.search(r"[A-Z]", password))
+    has_lower = bool(re.search(r"[a-z]", password))
+    has_digit = bool(re.search(r"\d", password))
+    has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', password))
+
+    if all([has_upper, has_lower, has_digit, has_special]):
+        return "Strong"
+    elif (
+        all([has_upper, has_lower])
+        or all([has_upper, has_digit])
+        or all([has_upper, has_special])
+        or all([has_lower, has_digit])
+        or all([has_lower, has_special])
+        or all([has_digit, has_special])
+    ):
+        return "Moderate"
+    else:
+        return "Weak"
+
+
+def coppy_to_clipboard(text: str):
+    pyperclip.copy(text)

@@ -3,3 +3,5 @@ sqlalchemy-utils
 pydantic
 cryptography
 tzdata
+tabulate
+pyperclip
