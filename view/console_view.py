@@ -89,7 +89,9 @@ def list_all_accounts(account_service: AccountService):
 
 
 def select_field_by_name(account):
-    field_name = input("Please provide field name: ")
+    field_name = input("Please provide field name: ").lower()
+    if " " in field_name:
+        field_name = field_name.replace(" ", "_")
     if hasattr(account, field_name):
         return getattr(account, field_name)
     else:
