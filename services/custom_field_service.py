@@ -71,8 +71,7 @@ class CustomFieldService:
     def delete(self, id: int):
         try:
             custom_field = self.get_by_id(id)
-        except NotFoundCustomFieldException as e:
-            print(f"Error {e}")
+        except NotFoundCustomFieldException:
             return False
 
         self.db.delete(custom_field)

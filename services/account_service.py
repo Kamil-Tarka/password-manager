@@ -75,7 +75,6 @@ class AccountService:
         try:
             account = self.get_by_id(id)
         except NotFoundAccountException as e:
-            print(f"Error: {e}")
             return False
 
         self.db.delete(account)
