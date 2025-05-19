@@ -31,6 +31,11 @@ def create_database(secret_key: str):
     return Account, CustomField
 
 
+def check_if_db_is_empty(account_service: AccountService) -> bool:
+    result = len(account_service.get_all())
+    return result == 0
+
+
 def check_secret_key(account_service: AccountService) -> bool:
     account_service.get_all()
     return True

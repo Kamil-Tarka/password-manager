@@ -14,6 +14,7 @@ from models.models import (
 from services.account_service import AccountService
 from services.custom_field_service import CustomFieldService
 from utils.utils import (
+    check_if_db_is_empty,
     check_password_strength,
     check_secret_key,
     coppy_to_clipboard,
@@ -344,11 +345,15 @@ def start_console_view():
     Account, CustomField = create_database(key)
     custom_field_service = CustomFieldService(db, CustomField, Account)
     account_service = AccountService(db, Account)
-    try:
-        check_secret_key(account_service)
-    except InvalidPaddingError:
-        print("Invalid secret key. Please provide a valid key.")
-        sys.exit(0)
+    if check_if_db_is_empty(account_service):
+        print("Dataabase is empty, please add new account")
+        add_new_account(account_service)
+    else:
+        try:
+            check_secret_key(account_service)
+        except InvalidPaddingError:
+            print("Invalid secret key. Please provide a valid key.")
+            sys.exit(0)
     list_all_accounts(account_service)
     while True:
         print_main_menu()
