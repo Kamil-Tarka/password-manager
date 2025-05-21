@@ -1,3 +1,4 @@
+import os
 import sys
 from datetime import datetime
 
@@ -37,7 +38,15 @@ def print_main_menu():
     print("3 - add new account")
     print("4 - edit account")
     print("5 - delete account")
-    print("6 - exit program")
+    print("6 - clear console")
+    print("7 - exit program")
+
+
+def clear_console():
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        os.system("clear")
 
 
 def print_account_data(account):
@@ -370,6 +379,8 @@ def start_console_view():
             case "5":
                 delete_account(account_service)
             case "6":
+                clear_console()
+            case "7":
                 print("Exit program")
                 sys.exit(0)
             case _:
