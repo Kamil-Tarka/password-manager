@@ -30,11 +30,11 @@ def ask_for_encryption_key(parent):
     ).pack(pady=10)
     key_entry = ttk.Entry(key_window, show="*", font=("Arial", 12))
     key_entry.pack(pady=10)
-    key_entry.focus_set()  # Ustaw fokus na pole do wpisywania hasła
+    key_entry.focus_set()
 
     key = tk.StringVar()
 
-    def submit_key(event=None):  # Dodano `event=None` dla obsługi zdarzeń klawiatury
+    def submit_key(event=None):
         entered_key = key_entry.get()
         if entered_key.strip():
             key.set(entered_key)
@@ -42,10 +42,8 @@ def ask_for_encryption_key(parent):
         else:
             messagebox.showwarning("Warning", "Master password cannot be empty.")
 
-    # Przycisk do zatwierdzenia klucza
     ttk.Button(key_window, text="Submit", command=submit_key).pack(pady=10)
 
-    # Powiązanie klawisza Enter z funkcją `submit_key`
     key_window.bind("<Return>", submit_key)
 
     parent.wait_window(key_window)
@@ -56,8 +54,11 @@ def display_accounts(
     table_frame,
     account_service: AccountService,
     custom_field_service: CustomFieldService,
+    filter_title: str = "",
+    filter_user_name: str = "",
+    filter_url: str = "",
 ):
-    # Usuwanie poprzednich widżetów tylko z ramki tabeli
+
     for widget in table_frame.winfo_children():
         widget.destroy()
 
@@ -70,15 +71,94 @@ def display_accounts(
         "Expiration date",
     )
 
-    frame = ttk.Frame(table_frame)
-    frame.pack(fill="both", expand=True, padx=8, pady=8)  # Zmniejszono padding
+    filter_frame = ttk.Frame(table_frame)
+    filter_frame.pack(fill="x", padx=8, pady=(4, 0))
 
-    tree = ttk.Treeview(
-        frame, columns=columns, show="headings", height=12
-    )  # Zmniejszono wysokość
+    ttk.Label(filter_frame, text="Title:").pack(side="left")
+    filter_title_var = tk.StringVar(value=filter_title)
+    filter_title_entry = ttk.Entry(
+        filter_frame, textvariable=filter_title_var, width=14
+    )
+    filter_title_entry.pack(side="left", padx=(2, 8))
+
+    ttk.Label(filter_frame, text="User name:").pack(side="left")
+    filter_user_name_var = tk.StringVar(value=filter_user_name)
+    filter_user_name_entry = ttk.Entry(
+        filter_frame, textvariable=filter_user_name_var, width=14
+    )
+    filter_user_name_entry.pack(side="left", padx=(2, 8))
+
+    ttk.Label(filter_frame, text="URL:").pack(side="left")
+    filter_url_var = tk.StringVar(value=filter_url)
+    filter_url_entry = ttk.Entry(filter_frame, textvariable=filter_url_var, width=14)
+    filter_url_entry.pack(side="left", padx=(2, 8))
+
+    if not filter_title and not filter_user_name and not filter_url:
+        filter_title_entry.focus_set()
+
+    last_focus = {"field": "title"}
+
+    def set_last_focus(event, field_name):
+        last_focus["field"] = field_name
+
+    filter_title_entry.bind("<FocusIn>", lambda e: set_last_focus(e, "title"))
+    filter_user_name_entry.bind("<FocusIn>", lambda e: set_last_focus(e, "user"))
+    filter_url_entry.bind("<FocusIn>", lambda e: set_last_focus(e, "url"))
+
+    def on_filter_change(*args):
+        current_title = filter_title_var.get()
+        current_user_name = filter_user_name_var.get()
+        current_url = filter_url_var.get()
+        cursor_title = filter_title_entry.index(tk.INSERT)
+        cursor_user = filter_user_name_entry.index(tk.INSERT)
+        cursor_url = filter_url_entry.index(tk.INSERT)
+        display_accounts(
+            table_frame,
+            account_service,
+            custom_field_service,
+            current_title,
+            current_user_name,
+            current_url,
+        )
+
+        for widget in table_frame.winfo_children():
+            if isinstance(widget, ttk.Frame):
+                entries = [
+                    child
+                    for child in widget.winfo_children()
+                    if isinstance(child, ttk.Entry)
+                ]
+                if len(entries) >= 3:
+                    if last_focus["field"] == "title":
+                        entries[0].focus_set()
+                        try:
+                            entries[0].icursor(cursor_title)
+                        except Exception:
+                            pass
+                    elif last_focus["field"] == "user":
+                        entries[1].focus_set()
+                        try:
+                            entries[1].icursor(cursor_user)
+                        except Exception:
+                            pass
+                    elif last_focus["field"] == "url":
+                        entries[2].focus_set()
+                        try:
+                            entries[2].icursor(cursor_url)
+                        except Exception:
+                            pass
+
+    filter_title_var.trace_add("write", on_filter_change)
+    filter_user_name_var.trace_add("write", on_filter_change)
+    filter_url_var.trace_add("write", on_filter_change)
+
+    frame = ttk.Frame(table_frame)
+    frame.pack(fill="both", expand=True, padx=8, pady=8)
+
+    tree = ttk.Treeview(frame, columns=columns, show="headings", height=12)
     for col in columns:
         tree.heading(col, text=col)
-        tree.column(col, width=100, anchor="center")  # Zmniejszono szerokość kolumn
+        tree.column(col, width=100, anchor="center")
 
     vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=vsb.set)
@@ -89,6 +169,20 @@ def display_accounts(
     hsb.pack(side="bottom", fill="x")
 
     accounts = account_service.get_all()
+    if filter_title:
+        accounts = [
+            acc for acc in accounts if filter_title.lower() in (acc.title or "").lower()
+        ]
+    if filter_user_name:
+        accounts = [
+            acc
+            for acc in accounts
+            if filter_user_name.lower() in (acc.user_name or "").lower()
+        ]
+    if filter_url:
+        accounts = [
+            acc for acc in accounts if filter_url.lower() in (acc.url or "").lower()
+        ]
     for acc in accounts:
         tree.insert(
             "",
@@ -104,12 +198,10 @@ def display_accounts(
         )
     tree.pack(fill="both", expand=True)
 
-    # --- MENU KONTEKSTOWE ---
     context_menu = tk.Menu(tree, tearoff=0)
 
-    # Funkcja refresh_callback musi być przekazana do display_accounts!
     def on_add_account():
-        # root musi być przekazany do display_accounts lub pobrany przez .winfo_toplevel()
+
         root = tree.winfo_toplevel()
         add_account_gui(
             root,
@@ -126,7 +218,7 @@ def display_accounts(
             values = tree.item(sel[0])["values"]
             if values:
                 account = account_service.get_by_id(values[0])
-                # account.custom_fields jest zawsze aktualne!
+
                 account_data = {
                     "Id": account.id,
                     "Title": account.title,
@@ -135,9 +227,7 @@ def display_accounts(
                     "URL": account.url,
                     "Notes": account.notes,
                     "Expiration date": account.expiration_date,
-                    "custom_fields": list(
-                        account.custom_fields
-                    ),  # zawsze świeże z bazy
+                    "custom_fields": list(account.custom_fields),
                 }
                 root = tree.winfo_toplevel()
                 edit_account_gui(
@@ -161,7 +251,7 @@ def display_accounts(
             if values:
                 root = tree.winfo_toplevel()
                 root.clipboard_clear()
-                root.clipboard_append(values[2])  # User name
+                root.clipboard_append(values[2])
 
     def on_copy_password():
         sel = tree.selection()
@@ -191,26 +281,24 @@ def display_accounts(
     context_menu.add_command(label="Copy password", command=on_copy_password)
     context_menu.add_command(label="Add new account", command=on_add_account)
     context_menu.add_command(label="Edit account", command=on_edit_account)
-    context_menu.add_command(
-        label="Delete account", command=on_delete_account
-    )  # Dodane
+    context_menu.add_command(label="Delete account", command=on_delete_account)
 
     def show_context_menu(event):
-        # Zaznacz wiersz pod kursorem, jeśli istnieje
+
         row_id = tree.identify_row(event.y)
         if row_id:
             tree.selection_set(row_id)
-        # Ustaw stan opcji w menu kontekstowym
+
         if tree.selection():
             context_menu.entryconfig("Edit account", state="normal")
             context_menu.entryconfig("Copy user name", state="normal")
             context_menu.entryconfig("Copy password", state="normal")
-            context_menu.entryconfig("Delete account", state="normal")  # Dodane
+            context_menu.entryconfig("Delete account", state="normal")
         else:
             context_menu.entryconfig("Edit account", state="disabled")
             context_menu.entryconfig("Copy user name", state="disabled")
             context_menu.entryconfig("Copy password", state="disabled")
-            context_menu.entryconfig("Delete account", state="disabled")  # Dodane
+            context_menu.entryconfig("Delete account", state="disabled")
         context_menu.tk_popup(event.x_root, event.y_root)
 
     tree.bind("<Button-3>", show_context_menu)
@@ -275,7 +363,7 @@ def add_account_gui(
     ]
 
     entries = []
-    show_password = [False]  # For closure mutability
+    show_password = [False]
 
     for idx, (label, var) in enumerate(fields):
         ttk.Label(add_window, text=label + ":").pack(pady=2)
@@ -363,13 +451,6 @@ def add_account_gui(
         add_window, text="Generate password", command=open_generate_password_window
     ).pack(pady=5)
 
-    # --- Scrollable custom fields frame ---
-    custom_fields_label = ttk.Label(
-        add_window, text="Custom fields", font=("Arial", 10, "bold")
-    )
-    custom_fields_label.pack(pady=(10, 0))
-
-    # --- Scrollable custom fields frame ---
     custom_fields_label = ttk.Label(
         add_window, text="Custom fields", font=("Arial", 10, "bold")
     )
@@ -396,7 +477,6 @@ def add_account_gui(
         custom_fields.append((name_var, value_var))
         canvas.configure(scrollregion=canvas.bbox("all"))
 
-    # Przycisk "Add custom field" pod etykietą custom fields
     ttk.Button(add_window, text="Add custom field", command=add_custom_field_row).pack(
         pady=(2, 6)
     )
@@ -438,26 +518,6 @@ def add_account_gui(
 
     custom_fields = []
 
-    # def add_custom_field_row():
-    #     row_frame = ttk.Frame(custom_fields_frame)
-    #     row_frame.pack(fill="x", pady=2)
-    #     name_var = tk.StringVar()
-    #     value_var = tk.StringVar()
-    #     ttk.Entry(row_frame, textvariable=name_var, width=15).pack(side="left", padx=2)
-    #     ttk.Entry(row_frame, textvariable=value_var, width=25).pack(side="left", padx=2)
-
-    #     def remove_row():
-    #         custom_fields.remove((name_var, value_var))
-    #         row_frame.destroy()
-    #         canvas.configure(scrollregion=canvas.bbox("all"))
-
-    #     ttk.Button(row_frame, text="Remove", command=remove_row).pack(
-    #         side="left", padx=2
-    #     )
-    #     custom_fields.append((name_var, value_var))
-    #     canvas.configure(scrollregion=canvas.bbox("all"))
-
-    # button_frame tylko dla "Submit"
     button_frame = ttk.Frame(add_window)
     button_frame.pack(pady=4)
 
@@ -559,7 +619,7 @@ def edit_account_gui(
     ]
 
     entries = []
-    show_password = [False]  # Use list for mutability in closure
+    show_password = [False]
     for idx, (label, var) in enumerate(fields):
         ttk.Label(edit_window, text=label + ":").pack(pady=2)
         if label.startswith("Notes"):
@@ -677,16 +737,14 @@ def edit_account_gui(
         custom_fields.append((name_var, value_var, None))
         canvas.configure(scrollregion=canvas.bbox("all"))
 
-    # Przycisk "Add custom field" pod etykietą custom fields
     ttk.Button(edit_window, text="Add custom field", command=add_custom_field_row).pack(
         pady=(2, 6)
     )
 
-    # --- Scrollable custom fields frame (smaller height) ---
     custom_fields_outer_frame = ttk.Frame(edit_window)
     custom_fields_outer_frame.pack(fill="x", padx=10, pady=(0, 2))
 
-    canvas = tk.Canvas(custom_fields_outer_frame, height=90)  # smaller height
+    canvas = tk.Canvas(custom_fields_outer_frame, height=90)
     canvas.pack(side="left", fill="x", expand=True)
 
     scrollbar = ttk.Scrollbar(
@@ -757,26 +815,6 @@ def edit_account_gui(
         ).pack(side="left", padx=2)
         custom_fields.append(pair)
 
-    # def add_custom_field_row():
-    #     row_frame = ttk.Frame(custom_fields_frame)
-    #     row_frame.pack(fill="x", pady=2)
-    #     name_var = tk.StringVar()
-    #     value_var = tk.StringVar()
-
-    #     def remove_row():
-    #         custom_fields.remove((name_var, value_var, None))
-    #         row_frame.destroy()
-    #         canvas.configure(scrollregion=canvas.bbox("all"))
-
-    #     ttk.Entry(row_frame, textvariable=name_var, width=15).pack(side="left", padx=2)
-    #     ttk.Entry(row_frame, textvariable=value_var, width=25).pack(side="left", padx=2)
-    #     ttk.Button(row_frame, text="Remove", command=remove_row).pack(
-    #         side="left", padx=2
-    #     )
-    #     custom_fields.append((name_var, value_var, None))
-    #     canvas.configure(scrollregion=canvas.bbox("all"))
-
-    # button_frame tylko dla "Save"
     button_frame = ttk.Frame(edit_window)
     button_frame.pack(pady=4)
 
@@ -870,7 +908,7 @@ def start_gui_view():
 
     root.deiconify()
     root.title("Password Manager")
-    root.geometry("650x480")  # Zmniejszono rozmiar okna
+    root.geometry("650x480")
 
     with get_db_session() as db_session:
         db = db_session
@@ -878,25 +916,43 @@ def start_gui_view():
 
     account_service = AccountService(db, Account)
     custom_field_service = CustomFieldService(db, CustomField, Account)
-    # Główna ramka
+
     main_frame = ttk.Frame(root)
     main_frame.pack(fill="both", expand=True)
 
-    # Ramka na tabelę
     table_frame = ttk.Frame(main_frame)
-    table_frame.pack(
-        fill="both", expand=True, pady=0, padx=0
-    )  # Usunięto dodatkowy padding
+    table_frame.pack(fill="both", expand=True, pady=0, padx=0)
 
-    # Ramka na przyciski
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(pady=(0, 20))
 
-    tree = display_accounts(table_frame, account_service, custom_field_service)
+    tree = display_accounts(
+        table_frame, account_service, custom_field_service, "", "", ""
+    )
 
     def refresh_accounts():
         nonlocal tree
-        tree = display_accounts(table_frame, account_service, custom_field_service)
+
+        filter_title = filter_user_name = filter_url = ""
+        for widget in table_frame.winfo_children():
+            if isinstance(widget, ttk.Frame):
+                entries = [
+                    child
+                    for child in widget.winfo_children()
+                    if isinstance(child, ttk.Entry)
+                ]
+                if len(entries) >= 3:
+                    filter_title = entries[0].get()
+                    filter_user_name = entries[1].get()
+                    filter_url = entries[2].get()
+        tree = display_accounts(
+            table_frame,
+            account_service,
+            custom_field_service,
+            filter_title,
+            filter_user_name,
+            filter_url,
+        )
 
     def on_edit_account_button():
         sel = tree.selection()
@@ -904,7 +960,7 @@ def start_gui_view():
             values = tree.item(sel[0])["values"]
             if values:
                 account = account_service.get_by_id(values[0])
-                # account.custom_fields jest zawsze aktualne!
+
                 account_data = {
                     "Id": account.id,
                     "Title": account.title,
@@ -913,9 +969,7 @@ def start_gui_view():
                     "URL": account.url,
                     "Notes": account.notes,
                     "Expiration date": account.expiration_date,
-                    "custom_fields": list(
-                        account.custom_fields
-                    ),  # zawsze świeże z bazy
+                    "custom_fields": list(account.custom_fields),
                 }
                 edit_account_gui(
                     root,
