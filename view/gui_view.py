@@ -18,7 +18,13 @@ from utils.utils import (
 )
 
 
+# --- Dialog for entering the master password (encryption key) ---
 def ask_for_encryption_key(parent):
+    """
+    Show a modal dialog to ask the user for the master password (encryption key).
+    Returns:
+        str: The entered master password.
+    """
     key_window = tk.Toplevel(parent)
     key_window.title("Enter master password")
     key_window.geometry("400x200")
@@ -50,6 +56,7 @@ def ask_for_encryption_key(parent):
     return key.get()
 
 
+# --- Main accounts table with filtering, context menu, and double-click edit ---
 def display_accounts(
     table_frame,
     account_service: AccountService,
@@ -58,7 +65,22 @@ def display_accounts(
     filter_user_name: str = "",
     filter_url: str = "",
 ):
+    """
+    Display the accounts table with filtering and context menu.
 
+    Args:
+        table_frame: The parent frame for the table.
+        account_service: Service for account operations.
+        custom_field_service: Service for custom field operations.
+        filter_title: Filter string for the Title column.
+        filter_user_name: Filter string for the User name column.
+        filter_url: Filter string for the URL column.
+
+    Returns:
+        ttk.Treeview: The accounts table widget.
+    """
+
+    # Remove previous widgets from the table frame
     for widget in table_frame.winfo_children():
         widget.destroy()
 
@@ -71,6 +93,7 @@ def display_accounts(
         "Expiration date",
     )
 
+    # --- Filtering section for Title, User name, and URL ---
     filter_frame = ttk.Frame(table_frame)
     filter_frame.pack(fill="x", padx=8, pady=(4, 0))
 
@@ -152,6 +175,7 @@ def display_accounts(
     filter_user_name_var.trace_add("write", on_filter_change)
     filter_url_var.trace_add("write", on_filter_change)
 
+    # --- Table setup (Treeview) ---
     frame = ttk.Frame(table_frame)
     frame.pack(fill="both", expand=True, padx=8, pady=8)
 
@@ -198,6 +222,7 @@ def display_accounts(
         )
     tree.pack(fill="both", expand=True)
 
+    # --- Context menu for table rows (copy, edit, delete) ---
     context_menu = tk.Menu(tree, tearoff=0)
 
     def on_add_account():
@@ -303,6 +328,7 @@ def display_accounts(
 
     tree.bind("<Button-3>", show_context_menu)
 
+    # --- Double-click row to edit account ---
     def on_double_click(event):
         item = tree.identify_row(event.y)
         if item:
@@ -335,12 +361,22 @@ def display_accounts(
     return tree
 
 
+# --- Dialog for adding a new account (with custom fields and password generator) ---
 def add_account_gui(
     root,
     account_service: AccountService,
     custom_field_service: CustomFieldService,
     refresh_callback,
 ):
+    """
+    Open a modal window for adding a new account.
+
+    Args:
+        root: The root Tk window.
+        account_service: Service for account operations.
+        custom_field_service: Service for custom field operations.
+        refresh_callback: Function to call after successful addition.
+    """
     add_window = tk.Toplevel(root)
     add_window.title("Add New Account")
     add_window.geometry("400x730")
@@ -573,6 +609,7 @@ def add_account_gui(
     add_window.bind("<Return>", submit)
 
 
+# --- Dialog for editing an existing account (with custom fields and password generator) ---
 def edit_account_gui(
     root,
     account_service: AccountService,
@@ -580,6 +617,16 @@ def edit_account_gui(
     account_data,
     refresh_callback,
 ):
+    """
+    Open a modal window for editing an existing account.
+
+    Args:
+        root: The root Tk window.
+        account_service: Service for account operations.
+        custom_field_service: Service for custom field operations.
+        account_data: Dictionary with account data to edit.
+        refresh_callback: Function to call after successful update.
+    """
     edit_window = tk.Toplevel(root)
     edit_window.title("Edit Account")
     edit_window.geometry("400x730")
@@ -888,7 +935,18 @@ def edit_account_gui(
     edit_window.bind("<Return>", submit)
 
 
+# --- Main GUI entry point and application loop ---
 def start_gui_view():
+    """
+    Entry point for the Password Manager GUI.
+    Handles:
+    - Encryption key prompt
+    - Main window and layout
+    - Service and database setup
+    - Table and button setup
+    - Button actions for add/edit/delete
+    - Application close confirmation
+    """
     root = tk.Tk()
     root.withdraw()
 

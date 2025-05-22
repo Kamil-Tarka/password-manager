@@ -26,12 +26,20 @@ from utils.utils import (
 
 
 def ask_for_key():
+    """
+    Prompt the user to enter the master password (encryption key).
+    Returns:
+        str: The entered master password.
+    """
     print("Please enter the master password: ")
     key = input()
     return key
 
 
 def print_main_menu():
+    """
+    Print the main menu options for the console application.
+    """
     print("Select option:")
     print("1 - list all stored accounts")
     print("2 - select account")
@@ -43,6 +51,9 @@ def print_main_menu():
 
 
 def clear_console():
+    """
+    Clear the console screen.
+    """
     if os.name == "nt":
         os.system("cls")
     else:
@@ -50,6 +61,12 @@ def clear_console():
 
 
 def print_account_data(account):
+    """
+    Print detailed information about an account, including custom fields.
+
+    Args:
+        account: The account object to display.
+    """
     data = [
         ["Id", account.id],
         ["Title", account.title],
@@ -80,6 +97,15 @@ def print_account_data(account):
 
 
 def list_all_accounts(account_service: AccountService):
+    """
+    List all accounts in a tabular format.
+
+    Args:
+        account_service: Service for account operations.
+
+    Returns:
+        list: List of account entries.
+    """
     entries = account_service.get_all()
     if not entries:
         print("No accounts found.")
@@ -110,6 +136,15 @@ def list_all_accounts(account_service: AccountService):
 
 
 def select_field_by_name(account):
+    """
+    Allow the user to select a field or custom field from an account to copy to clipboard.
+
+    Args:
+        account: The account object.
+
+    Returns:
+        str or None: The value of the selected field, or None if not found.
+    """
     print(
         "To coppy account data to clipboard, please provide field name, to copy custom field, please provide 'custom field' first"
     )
@@ -137,6 +172,12 @@ def select_field_by_name(account):
 
 
 def select_account(account_service: AccountService):
+    """
+    Allow the user to select an account by ID and perform actions (copy, show password).
+
+    Args:
+        account_service: Service for account operations.
+    """
     account_id = int(input("Provide account id: "))
     try:
         account = account_service.get_by_id(account_id)
@@ -161,6 +202,15 @@ def select_account(account_service: AccountService):
 
 
 def add_new_account(account_service: AccountService):
+    """
+    Prompt the user to add a new account, including password generation and strength check.
+
+    Args:
+        account_service: Service for account operations.
+
+    Returns:
+        The created account object.
+    """
     title = str(input("Please provide account title: "))
     user_name = str(input("Please provide user name: "))
     ask_generate_password = input("Do you want to generate password? (y/n): ")
@@ -205,6 +255,16 @@ def add_new_account(account_service: AccountService):
 
 
 def edit_account_data(account, account_service: AccountService):
+    """
+    Edit the data of an existing account.
+
+    Args:
+        account: The account object to edit.
+        account_service: Service for account operations.
+
+    Returns:
+        The updated account object.
+    """
     print(
         "Please provide new data, all data are optional\nif you don't want to change field, just press enter"
     )
@@ -252,6 +312,16 @@ def edit_account_data(account, account_service: AccountService):
 
 
 def add_new_custom_field(account, custom_field_service: CustomFieldService):
+    """
+    Add a new custom field to an account.
+
+    Args:
+        account: The account object.
+        custom_field_service: Service for custom field operations.
+
+    Returns:
+        The created custom field object.
+    """
     print("Provide custom field data")
     name = input("Please provide custom field name: ")
     value = input("Please provide custom vield value: ")
@@ -264,6 +334,16 @@ def add_new_custom_field(account, custom_field_service: CustomFieldService):
 
 
 def update_custom_field(account, custom_field_service: CustomFieldService):
+    """
+    Update an existing custom field for an account.
+
+    Args:
+        account: The account object.
+        custom_field_service: Service for custom field operations.
+
+    Returns:
+        The updated custom field object.
+    """
     cusotm_field_id = int(input("Provide custom field Id: "))
     try:
         custom_field = custom_field_service.get_by_id(cusotm_field_id)
@@ -285,6 +365,16 @@ def update_custom_field(account, custom_field_service: CustomFieldService):
 
 
 def delete_custom_field(account, custom_field_service: CustomFieldService):
+    """
+    Delete a custom field from an account.
+
+    Args:
+        account: The account object.
+        custom_field_service: Service for custom field operations.
+
+    Returns:
+        Result of the delete operation.
+    """
     cusotm_field_id = int(input("Provide custom field Id: "))
     try:
         custom_field = custom_field_service.get_by_id(cusotm_field_id)
@@ -302,6 +392,13 @@ def delete_custom_field(account, custom_field_service: CustomFieldService):
 def update_account(
     account_service: AccountService, custom_field_service: CustomFieldService
 ):
+    """
+    Update an account or its custom fields by presenting a menu of options.
+
+    Args:
+        account_service: Service for account operations.
+        custom_field_service: Service for custom field operations.
+    """
     account_id = int(input("Provide account id to update: "))
     try:
         account = account_service.get_by_id(account_id)
@@ -329,6 +426,15 @@ def update_account(
 
 
 def delete_account(account_service: AccountService):
+    """
+    Delete an account by ID after user confirmation.
+
+    Args:
+        account_service: Service for account operations.
+
+    Returns:
+        bool: True if deleted, False otherwise.
+    """
     account_id = int(input("Please provide account id: "))
     result = False
     try:
@@ -347,6 +453,15 @@ def delete_account(account_service: AccountService):
 
 
 def start_console_view():
+    """
+    Entry point for the console (command-line) view of the Password Manager.
+
+    Handles:
+    - Master password prompt
+    - Database and service setup
+    - Main menu loop for account management
+    - Error handling for invalid keys and missing accounts
+    """
     print("Program run in command line mode")
     key = ask_for_key()
     with get_db_session() as db_session:
