@@ -1,6 +1,9 @@
+import sys
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
+
+from sqlalchemy_utils.types.encrypted.padding import InvalidPaddingError
 
 from models.models import (
     CreateAccountDTO,
@@ -11,7 +14,9 @@ from models.models import (
 from services.account_service import AccountService
 from services.custom_field_service import CustomFieldService
 from utils.utils import (
+    check_if_db_is_empty,
     check_password_strength,
+    check_secret_key,
     create_database,
     generate_password,
     get_db_session,
@@ -967,13 +972,17 @@ def start_gui_view():
     root.deiconify()
     root.title("Password Manager")
     root.geometry("650x480")
+    try:
+        with get_db_session() as db_session:
+            db = db_session
+            Account, CustomField = create_database(encryption_key)
 
-    with get_db_session() as db_session:
-        db = db_session
-        Account, CustomField = create_database(encryption_key)
-
-    account_service = AccountService(db, Account)
-    custom_field_service = CustomFieldService(db, CustomField, Account)
+        account_service = AccountService(db, Account)
+        custom_field_service = CustomFieldService(db, CustomField, Account)
+        check_secret_key(account_service)
+    except InvalidPaddingError:
+        messagebox.showwarning("Invalid secret key", "Please provide a valid key.")
+        sys.exit(0)
 
     main_frame = ttk.Frame(root)
     main_frame.pack(fill="both", expand=True)
@@ -1082,5 +1091,9 @@ def start_gui_view():
             root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
+
+    if check_if_db_is_empty(account_service):
+        messagebox.showinfo("Info", "No accounts found. Please add an account.")
+        add_account_gui(root, account_service, custom_field_service, refresh_accounts)
 
     root.mainloop()
