@@ -182,6 +182,15 @@ def display_accounts(
     filter_user_name_var.trace_add("write", on_filter_change)
     filter_url_var.trace_add("write", on_filter_change)
 
+    def on_paste_event(event):
+
+        event.widget.after(1, on_filter_change)
+
+    for entry in (filter_title_entry, filter_user_name_entry, filter_url_entry):
+        entry.bind("<<Paste>>", on_paste_event)
+        entry.bind("<Control-v>", on_paste_event)
+        entry.bind("<ButtonRelease-2>", on_paste_event)
+
     # --- Table setup (Treeview) ---
     frame = ttk.Frame(table_frame)
     frame.pack(fill="both", expand=True, padx=8, pady=8)
