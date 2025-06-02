@@ -476,7 +476,7 @@ def add_account_gui(
     """
     add_window = tk.Toplevel(root)
     add_window.title("Add New Account")
-    add_window.geometry("400x730")
+    add_window.geometry("480x800")
     add_window.grab_set()
     add_window.focus_set()
 
@@ -633,7 +633,7 @@ def add_account_gui(
     custom_fields_outer_frame = ttk.Frame(add_window)
     custom_fields_outer_frame.pack(fill="x", padx=10, pady=(0, 2))
 
-    canvas = tk.Canvas(custom_fields_outer_frame, height=90)
+    canvas = tk.Canvas(custom_fields_outer_frame, height=100)
     canvas.pack(side="left", fill="x", expand=True)
 
     scrollbar = ttk.Scrollbar(
@@ -742,7 +742,7 @@ def edit_account_gui(
     """
     edit_window = tk.Toplevel(root)
     edit_window.title("Edit Account")
-    edit_window.geometry("400x730")
+    edit_window.geometry("480x800")
     edit_window.grab_set()
     edit_window.focus_set()
 
@@ -918,7 +918,7 @@ def edit_account_gui(
     custom_fields_outer_frame = ttk.Frame(edit_window)
     custom_fields_outer_frame.pack(fill="x", padx=10, pady=(0, 2))
 
-    canvas = tk.Canvas(custom_fields_outer_frame, height=90)
+    canvas = tk.Canvas(custom_fields_outer_frame, height=100)
     canvas.pack(side="left", fill="x", expand=True)
 
     scrollbar = ttk.Scrollbar(
@@ -1077,6 +1077,19 @@ def start_gui_view():
     root = tk.Tk()
     root.withdraw()
 
+    # --- Zwiększ wszystkie czcionki o 2 ---
+    import tkinter.font as tkfont
+
+    for font_name in (
+        "TkDefaultFont",
+        "TkTextFont",
+        "TkFixedFont",
+        "TkHeadingFont",
+        "TkMenuFont",
+    ):
+        f = tkfont.nametofont(font_name)
+        f.configure(size=f.cget("size") + 2)
+
     try:
         icon = tk.PhotoImage(file="assets/icon.png")
         root.iconphoto(True, icon)
@@ -1093,7 +1106,7 @@ def start_gui_view():
 
     root.deiconify()
     root.title("Password Manager")
-    root.geometry("640x400")
+    root.geometry("740x400")
     try:
         with get_db_session() as db_session:
             db = db_session
