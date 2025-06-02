@@ -69,6 +69,8 @@ def display_accounts(
     filter_title: str = "",
     filter_user_name: str = "",
     filter_url: str = "",
+    sort_column: str = None,  # type: ignore
+    sort_reverse: bool = False,
 ):
     """
     Display the accounts table with filtering and context menu.
@@ -186,7 +188,7 @@ def display_accounts(
 
     tree = ttk.Treeview(frame, columns=columns, show="headings", height=12)
     for col in columns:
-        tree.heading(col, text=col)
+        tree.heading(col, text=col, command=lambda c=col: sort_by_column(c))
         tree.column(col, width=100, anchor="center")
 
     vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
@@ -212,6 +214,26 @@ def display_accounts(
         accounts = [
             acc for acc in accounts if filter_url.lower() in (acc.url or "").lower()
         ]
+
+    if sort_column:
+
+        def get_attr(acc):
+            # Map column name to attribute
+            mapping = {
+                "Id": "id",
+                "Title": "title",
+                "User name": "user_name",
+                "URL": "url",
+                "Notes": "notes",
+                "Expiration date": "expiration_date",
+            }
+            attr = mapping.get(sort_column, sort_column)
+            val = getattr(acc, attr, "")
+            # For None values, sort as empty string
+            return val if val is not None else ""
+
+        accounts = sorted(accounts, key=get_attr, reverse=sort_reverse)
+
     for acc in accounts:
         tree.insert(
             "",
@@ -227,7 +249,26 @@ def display_accounts(
         )
     tree.pack(fill="both", expand=True)
 
-    # --- Context menu for table rows (copy, edit, delete) ---
+    def sort_by_column(col):
+        if not hasattr(table_frame, "_sort_col"):
+            table_frame._sort_col = None
+            table_frame._sort_reverse = False
+        if table_frame._sort_col == col:
+            table_frame._sort_reverse = not table_frame._sort_reverse
+        else:
+            table_frame._sort_col = col
+            table_frame._sort_reverse = False
+        display_accounts(
+            table_frame,
+            account_service,
+            custom_field_service,
+            filter_title_var.get() if "filter_title_var" in locals() else "",
+            filter_user_name_var.get() if "filter_user_name_var" in locals() else "",
+            filter_url_var.get() if "filter_url_var" in locals() else "",
+            sort_column=table_frame._sort_col,  # type: ignore
+            sort_reverse=table_frame._sort_reverse,
+        )
+
     context_menu = tk.Menu(tree, tearoff=0)
 
     def on_add_account():
@@ -405,6 +446,7 @@ def add_account_gui(
 
     entries = []
     show_password = [False]
+    password_strength_label = None  # for later reference
 
     for idx, (label, var) in enumerate(fields):
         ttk.Label(add_window, text=label + ":").pack(pady=2)
@@ -438,59 +480,74 @@ def add_account_gui(
                 )
                 show_btn.pack(pady=(0, 4))
 
-    password_strength_label = ttk.Label(add_window, text="Password strength: ")
-    password_strength_label.pack(pady=2)
-
-    def update_password_strength(*args):
-        password = fields[2][1].get()
-        strength = check_password_strength(password)
-        password_strength_label.config(text=f"Password strength: {strength}")
-
-    fields[2][1].trace_add("write", update_password_strength)
-    update_password_strength()
-
-    def open_generate_password_window():
-        gen_win = tk.Toplevel(add_window)
-        gen_win.title("Generate Password")
-        gen_win.geometry("300x250")
-        gen_win.grab_set()
-        gen_win.focus_set()
-
-        length_var = tk.IntVar(value=12)
-        use_digits = tk.BooleanVar(value=True)
-        use_uppercase = tk.BooleanVar(value=True)
-        use_special = tk.BooleanVar(value=True)
-
-        ttk.Label(gen_win, text="Length:").pack()
-        ttk.Entry(gen_win, textvariable=length_var).pack()
-
-        ttk.Checkbutton(gen_win, text="Use digits", variable=use_digits).pack()
-        ttk.Checkbutton(gen_win, text="Use uppercase", variable=use_uppercase).pack()
-        ttk.Checkbutton(gen_win, text="Use special chars", variable=use_special).pack()
-
-        def generate_and_set(event=None):
-            try:
-                pwd = generate_password(
-                    length=length_var.get(),
-                    use_digits=use_digits.get(),
-                    use_uppercase=use_uppercase.get(),
-                    use_special=use_special.get(),
+                password_strength_label = ttk.Label(
+                    add_window, text="Password strength: "
                 )
-                fields[2][1].set(pwd)
-                gen_win.destroy()
-                add_window.grab_set()
-                add_window.focus_set()
-            except Exception as e:
-                messagebox.showerror("Error", str(e))
-                gen_win.grab_set()
-                gen_win.focus_set()
+                password_strength_label.pack(pady=2)
 
-        ttk.Button(gen_win, text="Generate", command=generate_and_set).pack(pady=10)
-        gen_win.bind("<Return>", generate_and_set)
+                def update_password_strength(*args):
+                    password = fields[2][1].get()
+                    strength = check_password_strength(password)
+                    password_strength_label.config(  # type: ignore
+                        text=f"Password strength: {strength}"
+                    )
 
-    ttk.Button(
-        add_window, text="Generate password", command=open_generate_password_window
-    ).pack(pady=5)
+                # Ensure trace is set only once and updates live
+                fields[2][1].trace_add("write", update_password_strength)
+                update_password_strength()
+
+                def open_generate_password_window():
+                    gen_win = tk.Toplevel(add_window)
+                    gen_win.title("Generate Password")
+                    gen_win.geometry("300x250")
+                    gen_win.grab_set()
+                    gen_win.focus_set()
+
+                    length_var = tk.IntVar(value=12)
+                    use_digits = tk.BooleanVar(value=True)
+                    use_uppercase = tk.BooleanVar(value=True)
+                    use_special = tk.BooleanVar(value=True)
+
+                    ttk.Label(gen_win, text="Length:").pack()
+                    ttk.Entry(gen_win, textvariable=length_var).pack()
+
+                    ttk.Checkbutton(
+                        gen_win, text="Use digits", variable=use_digits
+                    ).pack()
+                    ttk.Checkbutton(
+                        gen_win, text="Use uppercase", variable=use_uppercase
+                    ).pack()
+                    ttk.Checkbutton(
+                        gen_win, text="Use special chars", variable=use_special
+                    ).pack()
+
+                    def generate_and_set(event=None):
+                        try:
+                            pwd = generate_password(
+                                length=length_var.get(),
+                                use_digits=use_digits.get(),
+                                use_uppercase=use_uppercase.get(),
+                                use_special=use_special.get(),
+                            )
+                            fields[2][1].set(pwd)
+                            gen_win.destroy()
+                            add_window.grab_set()
+                            add_window.focus_set()
+                        except Exception as e:
+                            messagebox.showerror("Error", str(e))
+                            gen_win.grab_set()
+                            gen_win.focus_set()
+
+                    ttk.Button(gen_win, text="Generate", command=generate_and_set).pack(
+                        pady=10
+                    )
+                    gen_win.bind("<Return>", generate_and_set)
+
+                ttk.Button(
+                    add_window,
+                    text="Generate password",
+                    command=open_generate_password_window,
+                ).pack(pady=5)
 
     custom_fields_label = ttk.Label(
         add_window, text="Custom fields", font=("Arial", 10, "bold")
@@ -672,6 +729,8 @@ def edit_account_gui(
 
     entries = []
     show_password = [False]
+    password_strength_label = None  # for later reference
+
     for idx, (label, var) in enumerate(fields):
         ttk.Label(edit_window, text=label + ":").pack(pady=2)
         if label.startswith("Notes"):
@@ -709,61 +768,73 @@ def edit_account_gui(
                 )
                 show_btn.pack(pady=(0, 4))
 
-    password_strength_label = ttk.Label(edit_window, text="Password strength: ")
-    password_strength_label.pack(pady=2)
-
-    def update_password_strength(*args):
-        password = fields[2][1].get()
-        strength = check_password_strength(password)
-        password_strength_label.config(text=f"Password strength: {strength}")
-
-    fields[2][1].trace_add("write", update_password_strength)
-    update_password_strength()
-
-    def open_generate_password_window():
-        gen_win = tk.Toplevel(edit_window)
-        gen_win.title("Generate Password")
-        gen_win.geometry("300x250")
-        gen_win.grab_set()
-        gen_win.focus_set()
-
-        length_var = tk.IntVar(value=12)
-        use_digits = tk.BooleanVar(value=True)
-        use_uppercase = tk.BooleanVar(value=True)
-        use_special = tk.BooleanVar(value=True)
-
-        ttk.Label(gen_win, text="Length:").pack()
-        ttk.Entry(gen_win, textvariable=length_var).pack()
-
-        ttk.Checkbutton(gen_win, text="Use digits", variable=use_digits).pack()
-        ttk.Checkbutton(gen_win, text="Use uppercase", variable=use_uppercase).pack()
-        ttk.Checkbutton(gen_win, text="Use special chars", variable=use_special).pack()
-
-        def generate_and_set(event=None):
-            try:
-                pwd = generate_password(
-                    length=length_var.get(),
-                    use_digits=use_digits.get(),
-                    use_uppercase=use_uppercase.get(),
-                    use_special=use_special.get(),
+                password_strength_label = ttk.Label(
+                    edit_window, text="Password strength: "
                 )
-                fields[2][1].set(pwd)
-                gen_win.destroy()
-                edit_window.grab_set()
-                edit_window.focus_set()
-            except Exception as e:
-                messagebox.showerror("Error", str(e))
-                gen_win.grab_set()
-                gen_win.focus_set()
+                password_strength_label.pack(pady=2)
 
-        ttk.Button(gen_win, text="Generate", command=generate_and_set).pack(pady=10)
-        gen_win.bind("<Return>", generate_and_set)
+                def update_password_strength(*args):
+                    password = fields[2][1].get()
+                    strength = check_password_strength(password)
+                    password_strength_label.config(  # type: ignore
+                        text=f"Password strength: {strength}"
+                    )
 
-    ttk.Button(
-        edit_window,
-        text="Generate password",
-        command=open_generate_password_window,
-    ).pack(pady=5)
+                fields[2][1].trace_add("write", update_password_strength)
+                update_password_strength()
+
+                def open_generate_password_window():
+                    gen_win = tk.Toplevel(edit_window)
+                    gen_win.title("Generate Password")
+                    gen_win.geometry("300x250")
+                    gen_win.grab_set()
+                    gen_win.focus_set()
+
+                    length_var = tk.IntVar(value=12)
+                    use_digits = tk.BooleanVar(value=True)
+                    use_uppercase = tk.BooleanVar(value=True)
+                    use_special = tk.BooleanVar(value=True)
+
+                    ttk.Label(gen_win, text="Length:").pack()
+                    ttk.Entry(gen_win, textvariable=length_var).pack()
+
+                    ttk.Checkbutton(
+                        gen_win, text="Use digits", variable=use_digits
+                    ).pack()
+                    ttk.Checkbutton(
+                        gen_win, text="Use uppercase", variable=use_uppercase
+                    ).pack()
+                    ttk.Checkbutton(
+                        gen_win, text="Use special chars", variable=use_special
+                    ).pack()
+
+                    def generate_and_set(event=None):
+                        try:
+                            pwd = generate_password(
+                                length=length_var.get(),
+                                use_digits=use_digits.get(),
+                                use_uppercase=use_uppercase.get(),
+                                use_special=use_special.get(),
+                            )
+                            fields[2][1].set(pwd)
+                            gen_win.destroy()
+                            edit_window.grab_set()
+                            edit_window.focus_set()
+                        except Exception as e:
+                            messagebox.showerror("Error", str(e))
+                            gen_win.grab_set()
+                            gen_win.focus_set()
+
+                    ttk.Button(gen_win, text="Generate", command=generate_and_set).pack(
+                        pady=10
+                    )
+                    gen_win.bind("<Return>", generate_and_set)
+
+                ttk.Button(
+                    edit_window,
+                    text="Generate password",
+                    command=open_generate_password_window,
+                ).pack(pady=5)
 
     custom_fields_label = ttk.Label(
         edit_window, text="Custom fields", font=("Arial", 10, "bold")
