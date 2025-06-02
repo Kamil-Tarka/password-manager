@@ -464,6 +464,8 @@ def start_console_view():
     """
     print("Program run in command line mode")
     key = ask_for_key()
+    clear_console()
+    print("Program run in command line mode")
     try:
         with get_db_session() as db_session:
             db = db_session
