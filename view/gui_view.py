@@ -1086,7 +1086,6 @@ def start_gui_view():
     root = tk.Tk()
     root.withdraw()
 
-    # --- Zwiększ wszystkie czcionki o 2 ---
     import tkinter.font as tkfont
 
     for font_name in (
