@@ -271,6 +271,14 @@ def display_accounts(
 
     context_menu = tk.Menu(tree, tearoff=0)
 
+    # --- Add submenu for custom fields ---
+    other_data_menu = tk.Menu(context_menu, tearoff=0)
+
+    def on_copy_custom_field_value(cf_value):
+        root = tree.winfo_toplevel()
+        root.clipboard_clear()
+        root.clipboard_append(cf_value)
+
     def on_add_account():
 
         root = tree.winfo_toplevel()
@@ -353,6 +361,8 @@ def display_accounts(
     context_menu.add_command(label="Add new account", command=on_add_account)
     context_menu.add_command(label="Edit account", command=on_edit_account)
     context_menu.add_command(label="Delete account", command=on_delete_account)
+    # Add placeholder for custom fields submenu
+    context_menu.add_cascade(label="Other data", menu=other_data_menu)
 
     def show_context_menu(event):
 
@@ -360,16 +370,57 @@ def display_accounts(
         if row_id:
             tree.selection_set(row_id)
 
+        # --- Custom fields submenu dynamic update ---
+        other_data_menu.delete(0, "end")
+        sel = tree.selection()
+        has_custom_fields = False
+        if sel:
+            values = tree.item(sel[0])["values"]
+            if values:
+                account = account_service.get_by_id(values[0])
+                custom_fields = getattr(account, "custom_fields", [])
+                if custom_fields:
+                    has_custom_fields = True
+                    for cf in custom_fields:
+                        cf_name = getattr(cf, "name", None) or (
+                            cf.get("name") if isinstance(cf, dict) else ""
+                        )
+                        cf_value = getattr(cf, "value", None) or (
+                            cf.get("value") if isinstance(cf, dict) else ""
+                        )
+                        if cf_name:
+                            other_data_menu.add_command(
+                                label=f'Copy "{cf_name}" value',
+                                command=lambda v=cf_value: on_copy_custom_field_value(
+                                    v
+                                ),
+                            )
+                else:
+                    other_data_menu.add_command(
+                        label="No custom fields", state="disabled"
+                    )
+            else:
+                other_data_menu.add_command(label="No custom fields", state="disabled")
+        else:
+            other_data_menu.add_command(label="No custom fields", state="disabled")
+
+        # --- Enable or disable menu items based on selection and custom fields ---
         if tree.selection():
             context_menu.entryconfig("Edit account", state="normal")
             context_menu.entryconfig("Copy user name", state="normal")
             context_menu.entryconfig("Copy password", state="normal")
             context_menu.entryconfig("Delete account", state="normal")
+            # Enable "Other data" only if custom fields exist
+            if has_custom_fields:
+                context_menu.entryconfig("Other data", state="normal")
+            else:
+                context_menu.entryconfig("Other data", state="disabled")
         else:
             context_menu.entryconfig("Edit account", state="disabled")
             context_menu.entryconfig("Copy user name", state="disabled")
             context_menu.entryconfig("Copy password", state="disabled")
             context_menu.entryconfig("Delete account", state="disabled")
+            context_menu.entryconfig("Other data", state="disabled")
         context_menu.tk_popup(event.x_root, event.y_root)
 
     tree.bind("<Button-3>", show_context_menu)
@@ -1042,7 +1093,7 @@ def start_gui_view():
 
     root.deiconify()
     root.title("Password Manager")
-    root.geometry("650x480")
+    root.geometry("640x400")
     try:
         with get_db_session() as db_session:
             db = db_session
