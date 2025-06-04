@@ -43,6 +43,21 @@ def ask_for_encryption_key(parent):
     key_entry.pack(pady=10)
     key_entry.focus_set()
 
+    show_password = [False]
+
+    def toggle_password():
+        if show_password[0]:
+            key_entry.config(show="*")
+            show_password[0] = False
+            show_btn.config(text="Show password")
+        else:
+            key_entry.config(show="")
+            show_password[0] = True
+            show_btn.config(text="Hide password")
+
+    show_btn = ttk.Button(key_window, text="Show password", command=toggle_password)
+    show_btn.pack(pady=(0, 8))
+
     key = tk.StringVar()
 
     def submit_key(event=None):
