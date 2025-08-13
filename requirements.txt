@@ -7,3 +7,4 @@ tabulate
 pyperclip
 python-dateutil
 pyinstaller
+pyqt6
