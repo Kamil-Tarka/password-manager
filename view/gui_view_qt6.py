@@ -75,7 +75,7 @@ class AccountTableModel(QtCore.QAbstractTableModel):
     def columnCount(self, parent=None):
         return len(self.headers)
 
-    def data(self, index, role):
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         acc = self.accounts[index.row()]
@@ -101,7 +101,7 @@ class AccountTableModel(QtCore.QAbstractTableModel):
                     return ""
         return None
 
-    def headerData(self, section, orientation, role):
+    def headerData(self, section, orientation, role=QtCore.Qt.ItemDataRole.DisplayRole):
         if (
             orientation == QtCore.Qt.Orientation.Horizontal
             and role == QtCore.Qt.ItemDataRole.DisplayRole
@@ -166,7 +166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setGeometry(100, 100, 740, 400)
         self.central = QtWidgets.QWidget()
         self.setCentralWidget(self.central)
-        self.layout = QtWidgets.QVBoxLayout(self.central)
+        self.main_layout = QtWidgets.QVBoxLayout(self.central)
 
         # Filtering
         filter_layout = QtWidgets.QHBoxLayout()
@@ -182,7 +182,7 @@ class MainWindow(QtWidgets.QMainWindow):
         filter_layout.addWidget(self.filter_user)
         filter_layout.addWidget(QtWidgets.QLabel("URL:"))
         filter_layout.addWidget(self.filter_url)
-        self.layout.addLayout(filter_layout)
+        self.main_layout.addLayout(filter_layout)
 
         self.filter_title.textChanged.connect(self.refresh_table)
         self.filter_user.textChanged.connect(self.refresh_table)
@@ -191,7 +191,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Table
         self.headers = ["Id", "Title", "User name", "URL", "Notes", "Expiration date"]
         self.table = QtWidgets.QTableView()
-        self.layout.addWidget(self.table)
+        self.main_layout.addWidget(self.table)
         self.table.setSelectionBehavior(
             QtWidgets.QTableView.SelectionBehavior.SelectRows
         )
@@ -200,7 +200,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().sectionClicked.connect(self.on_section_clicked)
+        header = self.table.horizontalHeader()
+        if header is not None:
+            header.sectionClicked.connect(self.on_section_clicked)
 
         # Buttons
         btn_layout = QtWidgets.QHBoxLayout()
@@ -210,7 +212,7 @@ class MainWindow(QtWidgets.QMainWindow):
         btn_layout.addWidget(self.add_btn)
         btn_layout.addWidget(self.edit_btn)
         btn_layout.addWidget(self.del_btn)
-        self.layout.addLayout(btn_layout)
+        self.main_layout.addLayout(btn_layout)
         self.add_btn.clicked.connect(self.add_account)
         self.edit_btn.clicked.connect(self.edit_account)
         self.del_btn.clicked.connect(self.delete_account)
@@ -247,7 +249,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
 
     def get_selected_account(self):
-        idxs = self.table.selectionModel().selectedRows()
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return None
+        idxs = selection_model.selectedRows()
         if not idxs:
             return None
         row = idxs[0].row()
@@ -310,12 +315,20 @@ class MainWindow(QtWidgets.QMainWindow):
                         lambda v=cf_value: self.copy_to_clipboard(v),
                     )
         else:
-            other_data_menu.addAction("No custom fields").setEnabled(False)
+            no_fields_action = other_data_menu.addAction("No custom fields")
+            if no_fields_action is not None:
+                no_fields_action.setEnabled(False)
         menu.addMenu(other_data_menu)
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        viewport = self.table.viewport()
+        if viewport is not None:
+            menu.exec(viewport.mapToGlobal(pos))
+        else:
+            menu.exec(self.mapToGlobal(pos))
 
     def copy_to_clipboard(self, value):
-        QtWidgets.QApplication.clipboard().setText(str(value))
+        clipboard = QtWidgets.QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(str(value))
 
     def on_section_clicked(self, idx):
         if self.last_sorted_col == idx:
@@ -457,9 +470,11 @@ class AccountDialog(QtWidgets.QDialog):
             if cf_id:
                 self.custom_field_service.delete(cf_id)
             for i in reversed(range(row.count())):
-                w = row.itemAt(i).widget()
-                if w:
-                    w.setParent(None)
+                item = row.itemAt(i)
+                if item is not None:
+                    w = item.widget()
+                    if w:
+                        w.setParent(None)
             self.custom_fields_layout.removeItem(row)
             try:
                 self.custom_fields.remove((name, value))
@@ -581,8 +596,8 @@ class PasswordGeneratorDialog(QtWidgets.QDialog):
         layout.addWidget(self.use_digits)
         layout.addWidget(self.use_uppercase)
         layout.addWidget(self.use_special)
-        self.result = QtWidgets.QLineEdit()
-        layout.addWidget(self.result)
+        self.result_line_edit = QtWidgets.QLineEdit()
+        layout.addWidget(self.result_line_edit)
         btn = QtWidgets.QPushButton("Generate")
         btn.clicked.connect(self.generate)
         layout.addWidget(btn)
@@ -598,12 +613,12 @@ class PasswordGeneratorDialog(QtWidgets.QDialog):
                 use_uppercase=self.use_uppercase.isChecked(),
                 use_special=self.use_special.isChecked(),
             )
-            self.result.setText(pwd)
+            self.result_line_edit.setText(pwd)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
 
     def get_password(self):
-        return self.result.text()
+        return self.result_line_edit.text()
 
 
 def start_gui_view():
@@ -649,11 +664,14 @@ class EscCloseFilter(QtCore.QObject):
         super().__init__()
         self.window = window
 
-    def eventFilter(self, obj, event):
+    def eventFilter(self, a0, a1):
         if (
-            event.type() == QtCore.QEvent.Type.KeyPress
-            and event.key() == QtCore.Qt.Key.Key_Escape
+            a1 is not None
+            and a1.type() == QtCore.QEvent.Type.KeyPress
+            and isinstance(a1, QtGui.QKeyEvent)
         ):
-            self.window.close()
-            return True
+            key_event = a1
+            if key_event.key() == QtCore.Qt.Key.Key_Escape:
+                self.window.close()
+                return True
         return False
