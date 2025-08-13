@@ -1,6 +1,3 @@
-# PyQt6 wersja GUI na podstawie gui_view.py (Tkinter)
-# Zachowuje całą logikę i funkcjonalność oryginału
-
 import sys
 from datetime import datetime
 
@@ -69,6 +66,8 @@ class AccountTableModel(QtCore.QAbstractTableModel):
         super().__init__()
         self.accounts = accounts
         self.headers = headers
+        self.sort_col = 0
+        self.sort_order = QtCore.Qt.SortOrder.AscendingOrder
 
     def rowCount(self, parent=None):
         return len(self.accounts)
@@ -93,7 +92,13 @@ class AccountTableModel(QtCore.QAbstractTableModel):
             elif col == 4:
                 return acc.notes
             elif col == 5:
-                return acc.expiration_date
+                val = acc.expiration_date
+                if isinstance(val, datetime):
+                    return val.strftime("%d-%m-%Y")
+                elif val is not None:
+                    return str(val)
+                else:
+                    return ""
         return None
 
     def headerData(self, section, orientation, role):
@@ -103,6 +108,53 @@ class AccountTableModel(QtCore.QAbstractTableModel):
         ):
             return self.headers[section]
         return None
+
+    def sort(self, column, order):
+        # Sort accounts by selected column
+        col_map = {
+            0: "id",
+            1: "title",
+            2: "user_name",
+            3: "url",
+            4: "notes",
+            5: "expiration_date",
+        }
+        attr = col_map.get(column, "id")
+        if attr == "expiration_date":
+
+            def sort_key(acc):
+                val = getattr(acc, attr, None)
+                if val is None or val == "":
+                    # None/empty dates sort as far future for ascending, far past for descending
+                    return (
+                        datetime.max
+                        if order == QtCore.Qt.SortOrder.AscendingOrder
+                        else datetime.min
+                    )
+                if isinstance(val, datetime):
+                    return val
+                try:
+                    # Try to parse string date
+                    return datetime.strptime(str(val), "%d-%m-%Y")
+                except Exception:
+                    return (
+                        datetime.max
+                        if order == QtCore.Qt.SortOrder.AscendingOrder
+                        else datetime.min
+                    )
+
+            self.accounts.sort(
+                key=sort_key,
+                reverse=(order == QtCore.Qt.SortOrder.DescendingOrder),
+            )
+        else:
+            self.accounts.sort(
+                key=lambda acc: getattr(acc, attr, ""),
+                reverse=(order == QtCore.Qt.SortOrder.DescendingOrder),
+            )
+        self.sort_col = column
+        self.sort_order = order
+        self.layoutChanged.emit()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -147,6 +199,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.doubleClicked.connect(self.edit_account)
         self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().sectionClicked.connect(self.on_section_clicked)
 
         # Buttons
         btn_layout = QtWidgets.QHBoxLayout()
@@ -160,6 +214,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.add_btn.clicked.connect(self.add_account)
         self.edit_btn.clicked.connect(self.edit_account)
         self.del_btn.clicked.connect(self.delete_account)
+
+        self.last_sorted_col = None
+        self.last_sort_order = QtCore.Qt.SortOrder.AscendingOrder
 
         self.refresh_table()
 
@@ -184,6 +241,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model = AccountTableModel(accounts, self.headers)
         self.table.setModel(self.model)
         self.table.resizeColumnsToContents()
+        if self.last_sorted_col is not None:
+            self.table.sortByColumn(self.last_sorted_col, self.last_sort_order)
+        else:
+            self.table.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
 
     def get_selected_account(self):
         idxs = self.table.selectionModel().selectedRows()
@@ -256,6 +317,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def copy_to_clipboard(self, value):
         QtWidgets.QApplication.clipboard().setText(str(value))
 
+    def on_section_clicked(self, idx):
+        if self.last_sorted_col == idx:
+            self.last_sort_order = (
+                QtCore.Qt.SortOrder.DescendingOrder
+                if self.last_sort_order == QtCore.Qt.SortOrder.AscendingOrder
+                else QtCore.Qt.SortOrder.AscendingOrder
+            )
+        else:
+            self.last_sorted_col = idx
+            self.last_sort_order = QtCore.Qt.SortOrder.AscendingOrder
+        self.model.sort(idx, self.last_sort_order)
+        self.table.sortByColumn(idx, self.last_sort_order)
+
 
 class AccountDialog(QtWidgets.QDialog):
     def __init__(self, parent, account_service, custom_field_service, account=None):
@@ -318,6 +392,7 @@ class AccountDialog(QtWidgets.QDialog):
         add_cf_btn = QtWidgets.QPushButton("Add custom field")
         add_cf_btn.clicked.connect(self.add_custom_field_row)
         layout.addWidget(add_cf_btn)
+        self.custom_field_widgets = []
 
         # Buttons
         btns = QtWidgets.QDialogButtonBox(
@@ -371,18 +446,29 @@ class AccountDialog(QtWidgets.QDialog):
         row = QtWidgets.QHBoxLayout()
         name = QtWidgets.QLineEdit()
         value = QtWidgets.QLineEdit()
+        cf_id = None
         if cf:
             name.setText(getattr(cf, "name", "") or cf.get("name", ""))
             value.setText(getattr(cf, "value", "") or cf.get("value", ""))
+            cf_id = getattr(cf, "id", None) if hasattr(cf, "id") else cf.get("id", None)
         remove_btn = QtWidgets.QPushButton("Remove")
 
         def remove():
+            if cf_id:
+                self.custom_field_service.delete(cf_id)
             for i in reversed(range(row.count())):
                 w = row.itemAt(i).widget()
                 if w:
                     w.setParent(None)
             self.custom_fields_layout.removeItem(row)
-            self.custom_fields.remove((name, value))
+            try:
+                self.custom_fields.remove((name, value))
+            except ValueError:
+                pass
+            try:
+                self.custom_field_widgets.remove((name, value, cf_id))
+            except ValueError:
+                pass
 
         remove_btn.clicked.connect(remove)
         row.addWidget(name)
@@ -390,6 +476,7 @@ class AccountDialog(QtWidgets.QDialog):
         row.addWidget(remove_btn)
         self.custom_fields_layout.addLayout(row)
         self.custom_fields.append((name, value))
+        self.custom_field_widgets.append((name, value, cf_id))
 
     def accept(self):
         title = self.fields["Title"].text().strip()
@@ -422,7 +509,38 @@ class AccountDialog(QtWidgets.QDialog):
                 expiration_date=expiration_date,
             )
             self.account_service.update(self.account.id, update_account_dto)
-            # Custom fields update logic omitted for brevity (implement as in Tkinter)
+            current_custom_fields = []
+            if hasattr(self.account, "custom_fields"):
+                current_custom_fields = self.account.custom_fields
+            existing_ids = set()
+            for cf in current_custom_fields:
+                cf_id = (
+                    getattr(cf, "id", None) if hasattr(cf, "id") else cf.get("id", None)
+                )
+                if cf_id:
+                    existing_ids.add(cf_id)
+            form_ids = set()
+            for name, value, cf_id in self.custom_field_widgets:
+                n = name.text().strip()
+                v = value.text().strip()
+                if n:
+                    if cf_id:
+                        from models.models import UpdateCustomFieldDTO
+
+                        self.custom_field_service.update(
+                            cf_id, UpdateCustomFieldDTO(name=n, value=v)
+                        )
+                        form_ids.add(cf_id)
+                    else:
+                        new_cf = self.custom_field_service.create(
+                            CreateCustomFieldDTO(
+                                name=n, value=v, account_id=self.account.id
+                            )
+                        )
+                        form_ids.add(getattr(new_cf, "id", None))
+            to_delete = existing_ids - form_ids
+            for cf_id in to_delete:
+                self.custom_field_service.delete(cf_id)
         else:
             new_account = CreateAccountDTO(
                 title=title,
@@ -539,6 +657,3 @@ class EscCloseFilter(QtCore.QObject):
             self.window.close()
             return True
         return False
-
-
-# Uruchom GUI przez: start_gui_view()
