@@ -624,6 +624,9 @@ class PasswordGeneratorDialog(QtWidgets.QDialog):
 def start_gui_view():
     app = QtWidgets.QApplication(sys.argv)
 
+    app_icon = QtGui.QIcon("assets/icon.png")
+    app.setWindowIcon(app_icon)
+
     # Encryption key dialog
     while True:
         dlg = EncryptionKeyDialog()
