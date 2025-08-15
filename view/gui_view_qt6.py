@@ -109,7 +109,7 @@ class AccountTableModel(QtCore.QAbstractTableModel):
             return self.headers[section]
         return None
 
-    def sort(self, column, order):
+    def sort(self, column, order):  # type: ignore
         # Sort accounts by selected column
         col_map = {
             0: "id",
@@ -163,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.account_service = account_service
         self.custom_field_service = custom_field_service
         self.setWindowTitle("Password Manager")
-        self.setGeometry(100, 100, 740, 400)
+        self.setGeometry(100, 100, 500, 400)
         self.central = QtWidgets.QWidget()
         self.setCentralWidget(self.central)
         self.main_layout = QtWidgets.QVBoxLayout(self.central)
@@ -357,7 +357,7 @@ class AccountDialog(QtWidgets.QDialog):
             QtWidgets.QLabel(
                 'Fields marked with "*" are required.',
                 font=QtGui.QFont("Arial", 10, italic=True),
-            )
+            )  # type: ignore
         )
 
         # Fields
@@ -397,7 +397,7 @@ class AccountDialog(QtWidgets.QDialog):
         layout.addWidget(
             QtWidgets.QLabel(
                 "Custom fields", font=QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold)
-            )
+            )  # type: ignore
         )
         self.custom_fields = []
         self.custom_fields_layout = QtWidgets.QVBoxLayout()
