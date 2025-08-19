@@ -12,12 +12,15 @@ from utils.utils import (
     check_password_strength,
     check_secret_key,
     create_database,
+    create_salt,
+    derive_key,
     generate_password,
     get_db_session,
+    load_salt,
 )
 
 
-class EncryptionKeyDialog(QtWidgets.QDialog):
+class MasterPasswordDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Enter master password")
@@ -231,6 +234,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def refresh_table(self):
         title, user, url = self.get_filters()
+
         accounts = self.account_service.get_all()
         if title:
             accounts = [a for a in accounts if title.lower() in (a.title or "").lower()]
@@ -583,7 +587,7 @@ class PasswordGeneratorDialog(QtWidgets.QDialog):
         self.setFixedSize(300, 250)
         layout = QtWidgets.QVBoxLayout(self)
         self.length = QtWidgets.QSpinBox()
-        self.length.setRange(6, 64)
+        self.length.setMinimum(1)
         self.length.setValue(12)
         self.use_digits = QtWidgets.QCheckBox("Use digits")
         self.use_digits.setChecked(True)
@@ -626,19 +630,28 @@ def start_gui_view():
 
     app_icon = QtGui.QIcon("assets/icon.png")
     app.setWindowIcon(app_icon)
-
+    salt = load_salt()
+    if salt is None:
+        salt = create_salt()
     # Encryption key dialog
     while True:
-        dlg = EncryptionKeyDialog()
+        dlg = MasterPasswordDialog()
         if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            encryption_key = dlg.get_key()
+            master_password = dlg.get_key()
+            encryption_key = str(derive_key(master_password, salt))
             try:
                 with get_db_session() as db_session:
                     db = db_session
                     Account, CustomField = create_database(encryption_key)
                 account_service = AccountService(db, Account)
                 custom_field_service = CustomFieldService(db, CustomField, Account)
-                check_secret_key(account_service)
+                if not check_secret_key(account_service):
+                    QtWidgets.QMessageBox.critical(
+                        None,
+                        "Error",
+                        "Invalid secret key. Please check your key and try again.",
+                    )
+                    sys.exit(0)
                 break
             except InvalidPaddingError:
                 QtWidgets.QMessageBox.warning(

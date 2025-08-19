@@ -145,3 +145,13 @@ class AccountService:
         self.db.delete(account)
         self.db.commit()
         return True
+
+    def check_if_any_account(self):
+        """
+        Check if there are any accounts in the database.
+
+        Returns:
+            bool: True if no accounts exist, False otherwise.
+        """
+        account = self.db.query(self.Account).first()
+        return account is None

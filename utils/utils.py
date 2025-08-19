@@ -6,13 +6,16 @@ password strength checking, clipboard operations, and database creation.
 """
 
 import contextlib
-import random
+import hashlib
+import os
 import re
+import secrets
 import string
 from typing import Generator
 
 import pyperclip
 from sqlalchemy.orm import Session
+from sqlalchemy_utils.types.encrypted.encrypted_type import InvalidCiphertextError
 
 from database_settings import Base, SessionLocal, engine
 from models.entities import get_account_entity, get_custom_field_entity
@@ -62,8 +65,36 @@ def check_if_db_is_empty(account_service: AccountService) -> bool:
     Returns:
         bool: True if empty, False otherwise.
     """
-    result = len(account_service.get_all())
-    return result == 0
+    result = account_service.check_if_any_account()
+    return result
+
+
+def create_salt() -> bytes:
+    """Generate new 16-byte salt for passwordhashing and save it to file."""
+    salt = os.urandom(16)
+    with open("salt.bin", "wb") as f:
+        f.write(salt)
+    return salt
+
+
+def load_salt() -> bytes:
+    """Load salt from file."""
+    try:
+        with open("salt.bin", "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None  # type: ignore
+
+
+def derive_key(password: str, salt: bytes) -> bytes:
+    """
+    Generate 32-byte key using PBKDF2-HMAC-SHA256.
+    """
+    iterations = 600000
+    key = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, iterations, dklen=32
+    )
+    return key
 
 
 def check_secret_key(account_service: AccountService) -> bool:
@@ -74,9 +105,12 @@ def check_secret_key(account_service: AccountService) -> bool:
         account_service (AccountService): Service for account operations.
 
     Returns:
-        bool: True if the key is valid.
+        bool: True if the key is valid, otherwise False.
     """
-    account_service.get_all()
+    try:
+        account_service.check_if_any_account()
+    except InvalidCiphertextError:
+        return False
     return True
 
 
@@ -159,5 +193,6 @@ def generate_password(
     if not character_pool:
         raise ValueError("At least one character type must be selected")
 
-    password = "".join(random.choice(character_pool) for _ in range(length))
+    password = "".join(secrets.choice(character_pool) for _ in range(length))
+    return password
     return password
