@@ -625,6 +625,24 @@ class PasswordGeneratorDialog(QtWidgets.QDialog):
         return self.result_line_edit.text()
 
 
+class EscCloseFilter(QtCore.QObject):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
+    def eventFilter(self, a0, a1):
+        if (
+            a1 is not None
+            and a1.type() == QtCore.QEvent.Type.KeyPress
+            and isinstance(a1, QtGui.QKeyEvent)
+        ):
+            key_event = a1
+            if key_event.key() == QtCore.Qt.Key.Key_Escape:
+                self.window.close()
+                return True
+        return False
+
+
 def start_gui_view():
     app = QtWidgets.QApplication(sys.argv)
 
@@ -676,23 +694,6 @@ def start_gui_view():
         main.add_account()
 
     app.installEventFilter(EscCloseFilter(main))
+    main.installEventFilter(EscCloseFilter(main))
 
     sys.exit(app.exec())
-
-
-class EscCloseFilter(QtCore.QObject):
-    def __init__(self, window):
-        super().__init__()
-        self.window = window
-
-    def eventFilter(self, a0, a1):
-        if (
-            a1 is not None
-            and a1.type() == QtCore.QEvent.Type.KeyPress
-            and isinstance(a1, QtGui.QKeyEvent)
-        ):
-            key_event = a1
-            if key_event.key() == QtCore.Qt.Key.Key_Escape:
-                self.window.close()
-                return True
-        return False

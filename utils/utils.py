@@ -14,7 +14,7 @@ import string
 from typing import Generator
 
 import pyperclip
-from sqlalchemy import Integer, String
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, Session, declarative_base, mapped_column
 from sqlalchemy_utils import StringEncryptedType
 from sqlalchemy_utils.types.encrypted.encrypted_type import (
@@ -23,7 +23,11 @@ from sqlalchemy_utils.types.encrypted.encrypted_type import (
 )
 
 from database_settings import Base, SessionLocal, engine
-from models.entities import get_account_entity, get_custom_field_entity
+from models.entities import (
+    get_account_entity,
+    get_custom_field_entity,
+    get_settings_entity,
+)
 from services.account_service import AccountService
 
 
@@ -54,8 +58,16 @@ def create_database(secret_key: str):
     """
     Account = get_account_entity(secret_key)
     CustomField = get_custom_field_entity(secret_key)
+    Settings = get_settings_entity(secret_key)
 
     Base.metadata.create_all(bind=engine)
+
+    with get_db_session() as db:
+        canary_exists = db.query(Settings).filter(Settings.key == "canary").first()
+        if not canary_exists:
+            validation_canary = Settings(key="canary", value="沈黙は最大の城塞なり")
+            db.add(validation_canary)
+            db.commit()
 
     return Account, CustomField
 
@@ -128,18 +140,21 @@ def is_key_valid(encryption_key: str) -> bool:
     """
     TempBase = declarative_base()
 
-    class TempAccount(TempBase):
-        __tablename__ = "account"
-        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-        title: Mapped[str] = mapped_column(
-            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5")
+    class TempSettings(TempBase):
+        __tablename__ = "settings"
+        key: Mapped[str] = mapped_column(String, primary_key=True)
+        value: Mapped[str] = mapped_column(
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=False,
         )
 
     db = SessionLocal()
     try:
-        db.query(TempAccount).first()
-
-        return True
+        cannary = db.query(TempSettings).filter(TempSettings.key == "canary").first()
+        if cannary:
+            return True
+        else:
+            return False
     except InvalidCiphertextError:
         return False
     except Exception:

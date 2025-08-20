@@ -16,12 +16,12 @@ from sqlalchemy_utils.types.encrypted.encrypted_type import AesGcmEngine
 from database_settings import Base
 
 
-def get_account_entity(key: str):
+def get_account_entity(encryption_key: str):
     """
     Dynamically generate the Account ORM entity class with encrypted fields.
 
     Args:
-        key (str): Encryption key for field-level encryption.
+        encryption_key (str): Encryption key for field-level encryption.
 
     Returns:
         type: Account ORM class.
@@ -48,23 +48,28 @@ def get_account_entity(key: str):
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
         title: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"),
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
             nullable=False,
         )
         user_name: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"), nullable=False
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=False,
         )
         password: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"), nullable=False
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=False,
         )
         url: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"), nullable=True
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=True,
         )
         notes: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"), nullable=True
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=True,
         )
         expiration_date: Mapped[datetime] = mapped_column(
-            StringEncryptedType(DateTime, key, AesGcmEngine, "pkcs5"), nullable=True
+            StringEncryptedType(DateTime, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=True,
         )
         creation_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
         last_modification_date: Mapped[datetime] = mapped_column(
@@ -78,12 +83,12 @@ def get_account_entity(key: str):
     return Account
 
 
-def get_custom_field_entity(key: str):
+def get_custom_field_entity(encryption_key: str):
     """
     Dynamically generate the CustomField ORM entity class with encrypted fields.
 
     Args:
-        key (str): Encryption key for field-level encryption.
+        encryption_key (str): Encryption key for field-level encryption.
 
     Returns:
         type: CustomField ORM class.
@@ -107,10 +112,12 @@ def get_custom_field_entity(key: str):
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
         name: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"), nullable=False
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=False,
         )
         value: Mapped[str] = mapped_column(
-            StringEncryptedType(String, key, AesGcmEngine, "pkcs5"), nullable=False
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=False,
         )
         account_id: Mapped[int] = mapped_column(
             Integer, ForeignKey("account.id"), nullable=False
@@ -123,3 +130,26 @@ def get_custom_field_entity(key: str):
         account = relationship("Account", back_populates="custom_fields")
 
     return CustomField
+
+
+def get_settings_entity(encryption_key: str):
+    """
+    Dynamically generate the Settings ORM entity class with encrypted fields.
+    Args:
+        encryption_key (str): Encryption key for field-level encryption.
+
+    Returns:
+        type: Settings ORM class.
+    """
+
+    class Settings(Base):
+        __tablename__ = "settings"
+        __table_args__ = {"extend_existing": True}
+
+        key: Mapped[str] = mapped_column(String, primary_key=True)
+        value: Mapped[str] = mapped_column(
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5"),
+            nullable=False,
+        )
+
+    return Settings
