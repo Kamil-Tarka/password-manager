@@ -8,9 +8,7 @@ depending on the command-line argument provided.
 import argparse
 
 from view.console_view import start_console_view
-
-# from view.gui_view import start_gui_view
-from view.gui_view_qt6 import start_gui_view
+from view.gui_view import start_gui_view
 
 
 def main():

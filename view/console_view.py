@@ -15,25 +15,30 @@ from models.models import (
 from services.account_service import AccountService
 from services.custom_field_service import CustomFieldService
 from utils.utils import (
+    check_if_db_exists,
     check_if_db_is_empty,
     check_password_strength,
-    check_secret_key,
     coppy_to_clipboard,
     create_database,
+    create_salt,
+    derive_key,
     generate_password,
     get_db_session,
+    is_key_valid,
+    load_salt,
 )
 
 
-def ask_for_key():
+def ask_for_master_password(salt):
     """
     Prompt the user to enter the master password (encryption key).
     Returns:
         str: The entered master password.
     """
     print("Please enter the master password: ")
-    key = input()
-    return key
+    master_password = input()
+    encryption_key = str(derive_key(master_password, salt))
+    return encryption_key
 
 
 def print_main_menu():
@@ -463,18 +468,29 @@ def start_console_view():
     - Error handling for invalid keys and missing accounts
     """
     print("Program run in command line mode")
-    key = ask_for_key()
     clear_console()
     print("Program run in command line mode")
+    salt = load_salt()
+    if salt is None:
+        salt = create_salt()
+    while True:
+        encryption_key = ask_for_master_password(salt)
+        if check_if_db_exists():
+            if is_key_valid(encryption_key):
+                break
+            else:
+                print(
+                    "Invalid master password. Please provide a valid master password."
+                )
+        else:
+            break
     try:
         with get_db_session() as db_session:
             db = db_session
-        Account, CustomField = create_database(key)
+        Account, CustomField = create_database(encryption_key)
         custom_field_service = CustomFieldService(db, CustomField, Account)
         account_service = AccountService(db, Account)
-        check_secret_key(account_service)
     except InvalidPaddingError:
-        print("Invalid secret key. Please provide a valid key.")
         sys.exit(0)
     if check_if_db_is_empty(account_service):
         print("Dataabase is empty, please add new account")

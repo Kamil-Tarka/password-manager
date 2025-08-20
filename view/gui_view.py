@@ -1,1257 +1,698 @@
 import sys
-import tkinter as tk
 from datetime import datetime
-from tkinter import messagebox, ttk
 
-from sqlalchemy_utils.types.encrypted.padding import InvalidPaddingError
+from PyQt6 import QtCore, QtGui, QtWidgets
 
-from models.models import (
-    CreateAccountDTO,
-    CreateCustomFieldDTO,
-    UpdateAccountDTO,
-    UpdateCustomFieldDTO,
-)
+from models.models import CreateAccountDTO, CreateCustomFieldDTO, UpdateAccountDTO
 from services.account_service import AccountService
 from services.custom_field_service import CustomFieldService
 from utils.utils import (
+    check_if_db_exists,
     check_if_db_is_empty,
     check_password_strength,
-    check_secret_key,
     create_database,
+    create_salt,
+    derive_key,
     generate_password,
     get_db_session,
+    is_key_valid,
+    load_salt,
 )
 
 
-# --- Dialog for entering the master password (encryption key) ---
-def ask_for_encryption_key(parent):
-    """
-    Show a modal dialog to ask the user for the master password (encryption key).
-    Returns:
-        str: The entered master password.
-    """
-    key_window = tk.Toplevel(parent)
-    key_window.title("Enter master password")
-    key_window.geometry("400x200")
-    key_window.grab_set()
-    key_window.focus_set()
+class MasterPasswordDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Enter master password")
+        self.setFixedSize(400, 200)
+        layout = QtWidgets.QVBoxLayout(self)
+        label = QtWidgets.QLabel("Please enter the master password:")
+        label.setFont(QtGui.QFont("Arial", 12))
+        layout.addWidget(label)
+        self.key_entry = QtWidgets.QLineEdit()
+        self.key_entry.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.key_entry.setFont(QtGui.QFont("Arial", 12))
+        layout.addWidget(self.key_entry)
+        self.show_btn = QtWidgets.QPushButton("Show password")
+        self.show_btn.clicked.connect(self.toggle_password)
+        layout.addWidget(self.show_btn)
+        self.submit_btn = QtWidgets.QPushButton("Submit")
+        self.submit_btn.clicked.connect(self.accept)
+        layout.addWidget(self.submit_btn)
+        self.key_entry.returnPressed.connect(self.accept)
+        self.key_entry.setFocus()
+        self.showing = False
 
-    ttk.Label(
-        key_window, text="Please enter the master password:", font=("Arial", 12)
-    ).pack(pady=10)
-    key_entry = ttk.Entry(key_window, show="*", font=("Arial", 12))
-    key_entry.pack(pady=10)
-    key_entry.focus_set()
-
-    show_password = [False]
-
-    def toggle_password():
-        if show_password[0]:
-            key_entry.config(show="*")
-            show_password[0] = False
-            show_btn.config(text="Show password")
+    def toggle_password(self):
+        if self.showing:
+            self.key_entry.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+            self.show_btn.setText("Show password")
         else:
-            key_entry.config(show="")
-            show_password[0] = True
-            show_btn.config(text="Hide password")
+            self.key_entry.setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
+            self.show_btn.setText("Hide password")
+        self.showing = not self.showing
 
-    show_btn = ttk.Button(key_window, text="Show password", command=toggle_password)
-    show_btn.pack(pady=(0, 8))
+    def get_key(self):
+        return self.key_entry.text().strip()
 
-    key = tk.StringVar()
-
-    def submit_key(event=None):
-        entered_key = key_entry.get()
-        if entered_key.strip():
-            key.set(entered_key)
-            key_window.destroy()
-        else:
-            messagebox.showwarning("Warning", "Master password cannot be empty.")
-
-    ttk.Button(key_window, text="Submit", command=submit_key).pack(pady=10)
-
-    key_window.bind("<Return>", submit_key)
-
-    parent.wait_window(key_window)
-    return key.get()
+    def accept(self):
+        if not self.key_entry.text().strip():
+            QtWidgets.QMessageBox.warning(
+                self, "Warning", "Master password cannot be empty."
+            )
+            return
+        super().accept()
 
 
-# --- Main accounts table with filtering, context menu, and double-click edit ---
-def display_accounts(
-    table_frame,
-    account_service: AccountService,
-    custom_field_service: CustomFieldService,
-    filter_title: str = "",
-    filter_user_name: str = "",
-    filter_url: str = "",
-    sort_column: str = None,  # type: ignore
-    sort_reverse: bool = False,
-):
-    """
-    Display the accounts table with filtering and context menu.
+class AccountTableModel(QtCore.QAbstractTableModel):
+    def __init__(self, accounts, headers):
+        super().__init__()
+        self.accounts = accounts
+        self.headers = headers
+        self.sort_col = 0
+        self.sort_order = QtCore.Qt.SortOrder.AscendingOrder
 
-    Args:
-        table_frame: The parent frame for the table.
-        account_service: Service for account operations.
-        custom_field_service: Service for custom field operations.
-        filter_title: Filter string for the Title column.
-        filter_user_name: Filter string for the User name column.
-        filter_url: Filter string for the URL column.
+    def rowCount(self, parent=None):
+        return len(self.accounts)
 
-    Returns:
-        ttk.Treeview: The accounts table widget.
-    """
+    def columnCount(self, parent=None):
+        return len(self.headers)
 
-    # Remove previous widgets from the table frame
-    for widget in table_frame.winfo_children():
-        widget.destroy()
-
-    columns = (
-        "Id",
-        "Title",
-        "User name",
-        "URL",
-        "Notes",
-        "Expiration date",
-    )
-
-    # --- Filtering section for Title, User name, and URL ---
-    filter_frame = ttk.Frame(table_frame)
-    filter_frame.pack(fill="x", padx=8, pady=(4, 0))
-
-    ttk.Label(filter_frame, text="Title:").pack(side="left")
-    filter_title_var = tk.StringVar(value=filter_title)
-    filter_title_entry = ttk.Entry(
-        filter_frame, textvariable=filter_title_var, width=14
-    )
-    filter_title_entry.pack(side="left", padx=(2, 8))
-
-    ttk.Label(filter_frame, text="User name:").pack(side="left")
-    filter_user_name_var = tk.StringVar(value=filter_user_name)
-    filter_user_name_entry = ttk.Entry(
-        filter_frame, textvariable=filter_user_name_var, width=14
-    )
-    filter_user_name_entry.pack(side="left", padx=(2, 8))
-
-    ttk.Label(filter_frame, text="URL:").pack(side="left")
-    filter_url_var = tk.StringVar(value=filter_url)
-    filter_url_entry = ttk.Entry(filter_frame, textvariable=filter_url_var, width=14)
-    filter_url_entry.pack(side="left", padx=(2, 8))
-
-    if not filter_title and not filter_user_name and not filter_url:
-        filter_title_entry.focus_set()
-
-    last_focus = {"field": "title"}
-
-    def set_last_focus(event, field_name):
-        last_focus["field"] = field_name
-
-    filter_title_entry.bind("<FocusIn>", lambda e: set_last_focus(e, "title"))
-    filter_user_name_entry.bind("<FocusIn>", lambda e: set_last_focus(e, "user"))
-    filter_url_entry.bind("<FocusIn>", lambda e: set_last_focus(e, "url"))
-
-    def on_filter_change(*args):
-        current_title = filter_title_var.get()
-        current_user_name = filter_user_name_var.get()
-        current_url = filter_url_var.get()
-        cursor_title = filter_title_entry.index(tk.INSERT)
-        cursor_user = filter_user_name_entry.index(tk.INSERT)
-        cursor_url = filter_url_entry.index(tk.INSERT)
-        display_accounts(
-            table_frame,
-            account_service,
-            custom_field_service,
-            current_title,
-            current_user_name,
-            current_url,
-        )
-
-        for widget in table_frame.winfo_children():
-            if isinstance(widget, ttk.Frame):
-                entries = [
-                    child
-                    for child in widget.winfo_children()
-                    if isinstance(child, ttk.Entry)
-                ]
-                if len(entries) >= 3:
-                    if last_focus["field"] == "title":
-                        entries[0].focus_set()
-                        try:
-                            entries[0].icursor(cursor_title)
-                        except Exception:
-                            pass
-                    elif last_focus["field"] == "user":
-                        entries[1].focus_set()
-                        try:
-                            entries[1].icursor(cursor_user)
-                        except Exception:
-                            pass
-                    elif last_focus["field"] == "url":
-                        entries[2].focus_set()
-                        try:
-                            entries[2].icursor(cursor_url)
-                        except Exception:
-                            pass
-
-    filter_title_var.trace_add("write", on_filter_change)
-    filter_user_name_var.trace_add("write", on_filter_change)
-    filter_url_var.trace_add("write", on_filter_change)
-
-    def on_paste_event(event):
-
-        event.widget.after(1, on_filter_change)
-
-    for entry in (filter_title_entry, filter_user_name_entry, filter_url_entry):
-        entry.bind("<<Paste>>", on_paste_event)
-        entry.bind("<Control-v>", on_paste_event)
-        entry.bind("<ButtonRelease-2>", on_paste_event)
-
-    # --- Table setup (Treeview) ---
-    frame = ttk.Frame(table_frame)
-    frame.pack(fill="both", expand=True, padx=8, pady=8)
-
-    tree = ttk.Treeview(frame, columns=columns, show="headings", height=12)
-    for col in columns:
-        tree.heading(col, text=col, command=lambda c=col: sort_by_column(c))
-        tree.column(col, width=100, anchor="center")
-
-    vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=vsb.set)
-    vsb.pack(side="right", fill="y")
-
-    hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
-    tree.configure(xscrollcommand=hsb.set)
-    hsb.pack(side="bottom", fill="x")
-
-    accounts = account_service.get_all()
-    if filter_title:
-        accounts = [
-            acc for acc in accounts if filter_title.lower() in (acc.title or "").lower()
-        ]
-    if filter_user_name:
-        accounts = [
-            acc
-            for acc in accounts
-            if filter_user_name.lower() in (acc.user_name or "").lower()
-        ]
-    if filter_url:
-        accounts = [
-            acc for acc in accounts if filter_url.lower() in (acc.url or "").lower()
-        ]
-
-    if sort_column:
-
-        def get_attr(acc):
-            # Map column name to attribute
-            mapping = {
-                "Id": "id",
-                "Title": "title",
-                "User name": "user_name",
-                "URL": "url",
-                "Notes": "notes",
-                "Expiration date": "expiration_date",
-            }
-            attr = mapping.get(sort_column, sort_column)
-            val = getattr(acc, attr, "")
-            # For None values, sort as empty string
-            return val if val is not None else ""
-
-        accounts = sorted(accounts, key=get_attr, reverse=sort_reverse)
-
-    for acc in accounts:
-        tree.insert(
-            "",
-            "end",
-            values=(
-                acc.id,
-                acc.title,
-                acc.user_name,
-                acc.url,
-                acc.notes,
-                acc.expiration_date,
-            ),
-        )
-    tree.pack(fill="both", expand=True)
-
-    def sort_by_column(col):
-        if not hasattr(table_frame, "_sort_col"):
-            table_frame._sort_col = None
-            table_frame._sort_reverse = False
-        if table_frame._sort_col == col:
-            table_frame._sort_reverse = not table_frame._sort_reverse
-        else:
-            table_frame._sort_col = col
-            table_frame._sort_reverse = False
-        display_accounts(
-            table_frame,
-            account_service,
-            custom_field_service,
-            filter_title_var.get() if "filter_title_var" in locals() else "",
-            filter_user_name_var.get() if "filter_user_name_var" in locals() else "",
-            filter_url_var.get() if "filter_url_var" in locals() else "",
-            sort_column=table_frame._sort_col,  # type: ignore
-            sort_reverse=table_frame._sort_reverse,
-        )
-
-    context_menu = tk.Menu(tree, tearoff=0)
-
-    # --- Add submenu for custom fields ---
-    other_data_menu = tk.Menu(context_menu, tearoff=0)
-
-    def on_copy_custom_field_value(cf_value):
-        root = tree.winfo_toplevel()
-        root.clipboard_clear()
-        root.clipboard_append(cf_value)
-
-    def on_add_account():
-
-        root = tree.winfo_toplevel()
-        add_account_gui(
-            root,
-            account_service,
-            custom_field_service,
-            lambda: display_accounts(
-                table_frame, account_service, custom_field_service
-            ),
-        )
-
-    def on_edit_account():
-        sel = tree.selection()
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                account = account_service.get_by_id(values[0])
-
-                account_data = {
-                    "Id": account.id,
-                    "Title": account.title,
-                    "User name": account.user_name,
-                    "Password": account.password,
-                    "URL": account.url,
-                    "Notes": account.notes,
-                    "Expiration date": account.expiration_date,
-                    "custom_fields": list(account.custom_fields),
-                }
-                root = tree.winfo_toplevel()
-                edit_account_gui(
-                    root,
-                    account_service,
-                    custom_field_service,
-                    account_data,
-                    lambda: display_accounts(
-                        table_frame, account_service, custom_field_service
-                    ),
-                )
-            else:
-                messagebox.showwarning("Warning", "No account selected.")
-        else:
-            messagebox.showwarning("Warning", "No account selected.")
-
-    def on_copy_username():
-        sel = tree.selection()
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                root = tree.winfo_toplevel()
-                root.clipboard_clear()
-                root.clipboard_append(values[2])
-
-    def on_copy_password():
-        sel = tree.selection()
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                account = account_service.get_by_id(values[0])
-                root = tree.winfo_toplevel()
-                root.clipboard_clear()
-                root.clipboard_append(account.password)
-
-    def on_delete_account():
-        sel = tree.selection()
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                confirm = messagebox.askyesno(
-                    "Confirm", "Are you sure you want to delete this account?"
-                )
-                if confirm:
-                    account_service.delete(values[0])
-                    display_accounts(table_frame, account_service, custom_field_service)
-        else:
-            messagebox.showwarning("Warning", "No account selected.")
-
-    context_menu.add_command(label="Copy user name", command=on_copy_username)
-    context_menu.add_command(label="Copy password", command=on_copy_password)
-    context_menu.add_command(label="Add new account", command=on_add_account)
-    context_menu.add_command(label="Edit account", command=on_edit_account)
-    context_menu.add_command(label="Delete account", command=on_delete_account)
-    # Add placeholder for custom fields submenu
-    context_menu.add_cascade(label="Other data", menu=other_data_menu)
-
-    def show_context_menu(event):
-
-        row_id = tree.identify_row(event.y)
-        if row_id:
-            tree.selection_set(row_id)
-
-        # --- Custom fields submenu dynamic update ---
-        other_data_menu.delete(0, "end")
-        sel = tree.selection()
-        has_custom_fields = False
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                account = account_service.get_by_id(values[0])
-                custom_fields = getattr(account, "custom_fields", [])
-                if custom_fields:
-                    has_custom_fields = True
-                    for cf in custom_fields:
-                        cf_name = getattr(cf, "name", None) or (
-                            cf.get("name") if isinstance(cf, dict) else ""
-                        )
-                        cf_value = getattr(cf, "value", None) or (
-                            cf.get("value") if isinstance(cf, dict) else ""
-                        )
-                        if cf_name:
-                            other_data_menu.add_command(
-                                label=f'Copy "{cf_name}" value',
-                                command=lambda v=cf_value: on_copy_custom_field_value(
-                                    v
-                                ),
-                            )
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        acc = self.accounts[index.row()]
+        col = index.column()
+        if role == QtCore.Qt.ItemDataRole.DisplayRole:
+            if col == 0:
+                return acc.id
+            elif col == 1:
+                return acc.title
+            elif col == 2:
+                return acc.user_name
+            elif col == 3:
+                return acc.url
+            elif col == 4:
+                return acc.notes
+            elif col == 5:
+                val = acc.expiration_date
+                if isinstance(val, datetime):
+                    return val.strftime("%d-%m-%Y")
+                elif val is not None:
+                    return str(val)
                 else:
-                    other_data_menu.add_command(
-                        label="No custom fields", state="disabled"
+                    return ""
+        return None
+
+    def headerData(self, section, orientation, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if (
+            orientation == QtCore.Qt.Orientation.Horizontal
+            and role == QtCore.Qt.ItemDataRole.DisplayRole
+        ):
+            return self.headers[section]
+        return None
+
+    def sort(self, column, order):  # type: ignore
+        # Sort accounts by selected column
+        col_map = {
+            0: "id",
+            1: "title",
+            2: "user_name",
+            3: "url",
+            4: "notes",
+            5: "expiration_date",
+        }
+        attr = col_map.get(column, "id")
+        if attr == "expiration_date":
+
+            def sort_key(acc):
+                val = getattr(acc, attr, None)
+                if val is None or val == "":
+                    # None/empty dates sort as far future for ascending, far past for descending
+                    return (
+                        datetime.max
+                        if order == QtCore.Qt.SortOrder.AscendingOrder
+                        else datetime.min
                     )
-            else:
-                other_data_menu.add_command(label="No custom fields", state="disabled")
-        else:
-            other_data_menu.add_command(label="No custom fields", state="disabled")
+                if isinstance(val, datetime):
+                    return val
+                try:
+                    # Try to parse string date
+                    return datetime.strptime(str(val), "%d-%m-%Y")
+                except Exception:
+                    return (
+                        datetime.max
+                        if order == QtCore.Qt.SortOrder.AscendingOrder
+                        else datetime.min
+                    )
 
-        # --- Enable or disable menu items based on selection and custom fields ---
-        if tree.selection():
-            context_menu.entryconfig("Edit account", state="normal")
-            context_menu.entryconfig("Copy user name", state="normal")
-            context_menu.entryconfig("Copy password", state="normal")
-            context_menu.entryconfig("Delete account", state="normal")
-            # Enable "Other data" only if custom fields exist
-            if has_custom_fields:
-                context_menu.entryconfig("Other data", state="normal")
-            else:
-                context_menu.entryconfig("Other data", state="disabled")
-        else:
-            context_menu.entryconfig("Edit account", state="disabled")
-            context_menu.entryconfig("Copy user name", state="disabled")
-            context_menu.entryconfig("Copy password", state="disabled")
-            context_menu.entryconfig("Delete account", state="disabled")
-            context_menu.entryconfig("Other data", state="disabled")
-        context_menu.tk_popup(event.x_root, event.y_root)
-
-    tree.bind("<Button-3>", show_context_menu)
-
-    # --- Double-click row to edit account ---
-    def on_double_click(event):
-        item = tree.identify_row(event.y)
-        if item:
-            tree.selection_set(item)
-            values = tree.item(item)["values"]
-            if values:
-                account = account_service.get_by_id(values[0])
-                account_data = {
-                    "Id": account.id,
-                    "Title": account.title,
-                    "User name": account.user_name,
-                    "Password": account.password,
-                    "URL": account.url,
-                    "Notes": account.notes,
-                    "Expiration date": account.expiration_date,
-                    "custom_fields": list(account.custom_fields),
-                }
-                root = tree.winfo_toplevel()
-                edit_account_gui(
-                    root,
-                    account_service,
-                    custom_field_service,
-                    account_data,
-                    lambda: display_accounts(
-                        table_frame, account_service, custom_field_service
-                    ),
-                )
-
-    tree.bind("<Double-1>", on_double_click)
-    return tree
-
-
-# --- Dialog for adding a new account (with custom fields and password generator) ---
-def add_account_gui(
-    root,
-    account_service: AccountService,
-    custom_field_service: CustomFieldService,
-    refresh_callback,
-):
-    """
-    Open a modal window for adding a new account.
-
-    Args:
-        root: The root Tk window.
-        account_service: Service for account operations.
-        custom_field_service: Service for custom field operations.
-        refresh_callback: Function to call after successful addition.
-    """
-    add_window = tk.Toplevel(root)
-    add_window.title("Add New Account")
-    add_window.geometry("480x800")
-    add_window.grab_set()
-    add_window.focus_set()
-
-    ttk.Label(
-        add_window,
-        text='Fields marked with "*" are required.',
-        font=("Arial", 10, "italic"),
-    ).pack(pady=(10, 5))
-
-    fields = [
-        ("Title*", tk.StringVar()),
-        ("User name*", tk.StringVar()),
-        ("Password*", tk.StringVar()),
-        ("URL", tk.StringVar()),
-        ("Notes", tk.StringVar()),
-        ("Expiration date (DD-MM-YYYY)", tk.StringVar()),
-    ]
-
-    entries = []
-    show_password = [False]
-    password_strength_label = None  # for later reference
-
-    for idx, (label, var) in enumerate(fields):
-        ttk.Label(add_window, text=label + ":").pack(pady=2)
-        if label.startswith("Notes"):
-            notes_text = tk.Text(
-                add_window, font=("TkFixedFont", 9), height=6, width=40, wrap="word"
+            self.accounts.sort(
+                key=sort_key,
+                reverse=(order == QtCore.Qt.SortOrder.DescendingOrder),
             )
-            notes_text.pack(pady=2)
-            entries.append(notes_text)
         else:
-            entry = ttk.Entry(
-                add_window, textvariable=var, show="*" if "Password" in label else ""
+            self.accounts.sort(
+                key=lambda acc: getattr(acc, attr, ""),
+                reverse=(order == QtCore.Qt.SortOrder.DescendingOrder),
             )
-            entry.pack(pady=2)
-            entries.append(entry)
-            if label == "Password*":
-                password_entry = entry
+        self.sort_col = column
+        self.sort_order = order
+        self.layoutChanged.emit()
 
-                def toggle_password():
-                    if show_password[0]:
-                        password_entry.config(show="*")
-                        show_password[0] = False
-                        show_btn.config(text="Show password")
-                    else:
-                        password_entry.config(show="")
-                        show_password[0] = True
-                        show_btn.config(text="Hide password")
 
-                show_btn = ttk.Button(
-                    add_window, text="Show password", command=toggle_password
-                )
-                show_btn.pack(pady=(0, 4))
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, account_service, custom_field_service):
+        super().__init__()
+        self.account_service = account_service
+        self.custom_field_service = custom_field_service
+        self.setWindowTitle("Password Manager")
+        self.setGeometry(100, 100, 500, 400)
+        self.central = QtWidgets.QWidget()
+        self.setCentralWidget(self.central)
+        self.main_layout = QtWidgets.QVBoxLayout(self.central)
 
-                password_strength_label = ttk.Label(
-                    add_window, text="Password strength: "
-                )
-                password_strength_label.pack(pady=2)
+        # Filtering
+        filter_layout = QtWidgets.QHBoxLayout()
+        self.filter_title = QtWidgets.QLineEdit()
+        self.filter_title.setPlaceholderText("Title")
+        self.filter_user = QtWidgets.QLineEdit()
+        self.filter_user.setPlaceholderText("User name")
+        self.filter_url = QtWidgets.QLineEdit()
+        self.filter_url.setPlaceholderText("URL")
+        filter_layout.addWidget(QtWidgets.QLabel("Title:"))
+        filter_layout.addWidget(self.filter_title)
+        filter_layout.addWidget(QtWidgets.QLabel("User name:"))
+        filter_layout.addWidget(self.filter_user)
+        filter_layout.addWidget(QtWidgets.QLabel("URL:"))
+        filter_layout.addWidget(self.filter_url)
+        self.main_layout.addLayout(filter_layout)
 
-                def update_password_strength(*args):
-                    password = fields[2][1].get()
-                    strength = check_password_strength(password)
-                    password_strength_label.config(  # type: ignore
-                        text=f"Password strength: {strength}"
-                    )
+        self.filter_title.textChanged.connect(self.refresh_table)
+        self.filter_user.textChanged.connect(self.refresh_table)
+        self.filter_url.textChanged.connect(self.refresh_table)
 
-                # Ensure trace is set only once and updates live
-                fields[2][1].trace_add("write", update_password_strength)
-                update_password_strength()
-
-                def open_generate_password_window():
-                    gen_win = tk.Toplevel(add_window)
-                    gen_win.title("Generate Password")
-                    gen_win.geometry("300x250")
-                    gen_win.grab_set()
-                    gen_win.focus_set()
-
-                    length_var = tk.IntVar(value=12)
-                    use_digits = tk.BooleanVar(value=True)
-                    use_uppercase = tk.BooleanVar(value=True)
-                    use_special = tk.BooleanVar(value=True)
-
-                    ttk.Label(gen_win, text="Length:").pack()
-                    ttk.Entry(gen_win, textvariable=length_var).pack()
-
-                    ttk.Checkbutton(
-                        gen_win, text="Use digits", variable=use_digits
-                    ).pack()
-                    ttk.Checkbutton(
-                        gen_win, text="Use uppercase", variable=use_uppercase
-                    ).pack()
-                    ttk.Checkbutton(
-                        gen_win, text="Use special chars", variable=use_special
-                    ).pack()
-
-                    def generate_and_set(event=None):
-                        try:
-                            pwd = generate_password(
-                                length=length_var.get(),
-                                use_digits=use_digits.get(),
-                                use_uppercase=use_uppercase.get(),
-                                use_special=use_special.get(),
-                            )
-                            fields[2][1].set(pwd)
-                            gen_win.destroy()
-                            add_window.grab_set()
-                            add_window.focus_set()
-                        except Exception as e:
-                            messagebox.showerror("Error", str(e))
-                            gen_win.grab_set()
-                            gen_win.focus_set()
-
-                    ttk.Button(gen_win, text="Generate", command=generate_and_set).pack(
-                        pady=10
-                    )
-                    gen_win.bind("<Return>", generate_and_set)
-
-                ttk.Button(
-                    add_window,
-                    text="Generate password",
-                    command=open_generate_password_window,
-                ).pack(pady=5)
-
-    custom_fields_label = ttk.Label(
-        add_window, text="Custom fields", font=("Arial", 10, "bold")
-    )
-    custom_fields_label.pack(pady=(10, 0))
-
-    custom_fields = []
-
-    def add_custom_field_row():
-        row_frame = ttk.Frame(custom_fields_frame)
-        row_frame.pack(fill="x", pady=2)
-        name_var = tk.StringVar()
-        value_var = tk.StringVar()
-        ttk.Entry(row_frame, textvariable=name_var, width=15).pack(side="left", padx=2)
-        ttk.Entry(row_frame, textvariable=value_var, width=25).pack(side="left", padx=2)
-
-        def remove_row():
-            custom_fields.remove((name_var, value_var))
-            row_frame.destroy()
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        ttk.Button(row_frame, text="Remove", command=remove_row).pack(
-            side="left", padx=2
+        # Table
+        self.headers = ["Id", "Title", "User name", "URL", "Notes", "Expiration date"]
+        self.table = QtWidgets.QTableView()
+        self.main_layout.addWidget(self.table)
+        self.table.setSelectionBehavior(
+            QtWidgets.QTableView.SelectionBehavior.SelectRows
         )
-        custom_fields.append((name_var, value_var))
-        canvas.configure(scrollregion=canvas.bbox("all"))
+        self.table.setSelectionMode(QtWidgets.QTableView.SelectionMode.SingleSelection)
+        self.table.doubleClicked.connect(self.edit_account)
+        self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.setSortingEnabled(True)
+        header = self.table.horizontalHeader()
+        if header is not None:
+            header.sectionClicked.connect(self.on_section_clicked)
 
-    ttk.Button(add_window, text="Add custom field", command=add_custom_field_row).pack(
-        pady=(2, 6)
-    )
+        # Buttons
+        btn_layout = QtWidgets.QHBoxLayout()
+        self.add_btn = QtWidgets.QPushButton("Add Account")
+        self.edit_btn = QtWidgets.QPushButton("Edit")
+        self.del_btn = QtWidgets.QPushButton("Delete")
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.edit_btn)
+        btn_layout.addWidget(self.del_btn)
+        self.main_layout.addLayout(btn_layout)
+        self.add_btn.clicked.connect(self.add_account)
+        self.edit_btn.clicked.connect(self.edit_account)
+        self.del_btn.clicked.connect(self.delete_account)
 
-    custom_fields_outer_frame = ttk.Frame(add_window)
-    custom_fields_outer_frame.pack(fill="x", padx=10, pady=(0, 2))
+        self.last_sorted_col = None
+        self.last_sort_order = QtCore.Qt.SortOrder.AscendingOrder
 
-    canvas = tk.Canvas(custom_fields_outer_frame, height=100)
-    canvas.pack(side="left", fill="x", expand=True)
+        self.refresh_table()
 
-    scrollbar = ttk.Scrollbar(
-        custom_fields_outer_frame, orient="vertical", command=canvas.yview
-    )
-    scrollbar.pack(side="right", fill="y")
+    def get_filters(self):
+        return (
+            self.filter_title.text(),
+            self.filter_user.text(),
+            self.filter_url.text(),
+        )
 
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.config(width=320)
+    def refresh_table(self):
+        title, user, url = self.get_filters()
 
-    def on_frame_configure(event):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-
-    custom_fields_frame = ttk.Frame(canvas)
-    canvas.create_window((0, 0), window=custom_fields_frame, anchor="nw")
-
-    custom_fields_frame.bind("<Configure>", on_frame_configure)
-
-    def _on_mousewheel(event):
-        if event.delta:
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        accounts = self.account_service.get_all()
+        if title:
+            accounts = [a for a in accounts if title.lower() in (a.title or "").lower()]
+        if user:
+            accounts = [
+                a for a in accounts if user.lower() in (a.user_name or "").lower()
+            ]
+        if url:
+            accounts = [a for a in accounts if url.lower() in (a.url or "").lower()]
+        self.model = AccountTableModel(accounts, self.headers)
+        self.table.setModel(self.model)
+        self.table.resizeColumnsToContents()
+        if self.last_sorted_col is not None:
+            self.table.sortByColumn(self.last_sorted_col, self.last_sort_order)
         else:
-            if event.num == 4:
-                canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                canvas.yview_scroll(1, "units")
+            self.table.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
 
-    canvas.bind_all("<MouseWheel>", _on_mousewheel)
-    canvas.bind_all("<Button-4>", _on_mousewheel)
-    canvas.bind_all("<Button-5>", _on_mousewheel)
+    def get_selected_account(self):
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return None
+        idxs = selection_model.selectedRows()
+        if not idxs:
+            return None
+        row = idxs[0].row()
+        acc_id = self.model.accounts[row].id
+        return self.account_service.get_by_id(acc_id)
 
-    custom_fields = []
+    def add_account(self):
+        dlg = AccountDialog(self, self.account_service, self.custom_field_service)
+        if dlg.exec():
+            self.refresh_table()
 
-    button_frame = ttk.Frame(add_window)
-    button_frame.pack(pady=4)
+    def edit_account(self):
+        acc = self.get_selected_account()
+        if not acc:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No account selected.")
+            return
+        dlg = AccountDialog(self, self.account_service, self.custom_field_service, acc)
+        if dlg.exec():
+            self.refresh_table()
 
-    ttk.Button(button_frame, text="Submit", command=lambda: submit()).pack(
-        side="left", padx=5, pady=10
-    )
+    def delete_account(self):
+        acc = self.get_selected_account()
+        if not acc:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No account selected.")
+            return
+        if (
+            QtWidgets.QMessageBox.question(
+                self, "Confirm", "Are you sure you want to delete this account?"
+            )
+            == QtWidgets.QMessageBox.StandardButton.Yes
+        ):
+            self.account_service.delete(acc.id)
+            self.refresh_table()
 
-    def submit(event=None):
-        title = fields[0][1].get()
-        user_name = fields[1][1].get()
-        password = fields[2][1].get()
-        url = fields[3][1].get()
-        notes = (
-            entries[4].get("1.0", "end").strip()
-            if hasattr(entries[4], "get")
-            else fields[4][1].get()
+    def show_context_menu(self, pos):
+        acc = self.get_selected_account()
+        menu = QtWidgets.QMenu(self)
+        menu.addAction(
+            "Copy user name",
+            lambda: self.copy_to_clipboard(acc.user_name if acc else ""),
         )
-        expiration_date_str = fields[5][1].get()
+        menu.addAction(
+            "Copy password", lambda: self.copy_to_clipboard(acc.password if acc else "")
+        )
+        menu.addAction("Edit account", self.edit_account)
+        menu.addAction("Delete account", self.delete_account)
+        # Custom fields submenu
+        other_data_menu = QtWidgets.QMenu("Other data", self)
+        if acc and acc.custom_fields:
+            for cf in acc.custom_fields:
+                cf_name = getattr(cf, "name", None) or (
+                    cf.get("name") if isinstance(cf, dict) else ""
+                )
+                cf_value = getattr(cf, "value", None) or (
+                    cf.get("value") if isinstance(cf, dict) else ""
+                )
+                if cf_name:
+                    other_data_menu.addAction(
+                        f'Copy "{cf_name}" value',
+                        lambda v=cf_value: self.copy_to_clipboard(v),
+                    )
+        else:
+            no_fields_action = other_data_menu.addAction("No custom fields")
+            if no_fields_action is not None:
+                no_fields_action.setEnabled(False)
+        menu.addMenu(other_data_menu)
+        viewport = self.table.viewport()
+        if viewport is not None:
+            menu.exec(viewport.mapToGlobal(pos))
+        else:
+            menu.exec(self.mapToGlobal(pos))
+
+    def copy_to_clipboard(self, value):
+        clipboard = QtWidgets.QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(str(value))
+
+    def on_section_clicked(self, idx):
+        if self.last_sorted_col == idx:
+            self.last_sort_order = (
+                QtCore.Qt.SortOrder.DescendingOrder
+                if self.last_sort_order == QtCore.Qt.SortOrder.AscendingOrder
+                else QtCore.Qt.SortOrder.AscendingOrder
+            )
+        else:
+            self.last_sorted_col = idx
+            self.last_sort_order = QtCore.Qt.SortOrder.AscendingOrder
+        self.model.sort(idx, self.last_sort_order)
+        self.table.sortByColumn(idx, self.last_sort_order)
+
+
+class AccountDialog(QtWidgets.QDialog):
+    def __init__(self, parent, account_service, custom_field_service, account=None):
+        super().__init__(parent)
+        self.account_service = account_service
+        self.custom_field_service = custom_field_service
+        self.account = account
+        self.setWindowTitle("Edit Account" if account else "Add New Account")
+        self.setMinimumWidth(480)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(
+            QtWidgets.QLabel(
+                'Fields marked with "*" are required.',
+                font=QtGui.QFont("Arial", 10, italic=True),
+            )  # type: ignore
+        )
+
+        # Fields
+        self.fields = {}
+        form = QtWidgets.QFormLayout()
+        self.fields["Title"] = QtWidgets.QLineEdit()
+        self.fields["User name"] = QtWidgets.QLineEdit()
+        self.fields["Password"] = QtWidgets.QLineEdit()
+        self.fields["Password"].setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.fields["URL"] = QtWidgets.QLineEdit()
+        self.fields["Notes"] = QtWidgets.QPlainTextEdit()
+        self.fields["Expiration date"] = QtWidgets.QLineEdit()
+        form.addRow("Title*:", self.fields["Title"])
+        form.addRow("User name*:", self.fields["User name"])
+        pw_layout = QtWidgets.QHBoxLayout()
+        pw_layout.addWidget(self.fields["Password"])
+        self.show_btn = QtWidgets.QPushButton("Show password")
+        self.show_btn.clicked.connect(self.toggle_password)
+        pw_layout.addWidget(self.show_btn)
+        form.addRow("Password*:", pw_layout)
+        form.addRow("URL:", self.fields["URL"])
+        form.addRow("Notes:", self.fields["Notes"])
+        form.addRow("Expiration date (DD-MM-YYYY):", self.fields["Expiration date"])
+        layout.addLayout(form)
+
+        # Password strength
+        self.pw_strength = QtWidgets.QLabel("Password strength: ")
+        layout.addWidget(self.pw_strength)
+        self.fields["Password"].textChanged.connect(self.update_pw_strength)
+
+        # Password generator
+        gen_btn = QtWidgets.QPushButton("Generate password")
+        gen_btn.clicked.connect(self.generate_password)
+        layout.addWidget(gen_btn)
+
+        # Custom fields
+        layout.addWidget(
+            QtWidgets.QLabel(
+                "Custom fields", font=QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold)
+            )  # type: ignore
+        )
+        self.custom_fields = []
+        self.custom_fields_layout = QtWidgets.QVBoxLayout()
+        layout.addLayout(self.custom_fields_layout)
+        add_cf_btn = QtWidgets.QPushButton("Add custom field")
+        add_cf_btn.clicked.connect(self.add_custom_field_row)
+        layout.addWidget(add_cf_btn)
+        self.custom_field_widgets = []
+
+        # Buttons
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        # Fill data if editing
+        if account:
+            self.fields["Title"].setText(account.title or "")
+            self.fields["User name"].setText(account.user_name or "")
+            self.fields["Password"].setText(account.password or "")
+            self.fields["URL"].setText(account.url or "")
+            self.fields["Notes"].setPlainText(account.notes or "")
+            if account.expiration_date:
+                if isinstance(account.expiration_date, datetime):
+                    self.fields["Expiration date"].setText(
+                        account.expiration_date.strftime("%d-%m-%Y")
+                    )
+                else:
+                    self.fields["Expiration date"].setText(str(account.expiration_date))
+            for cf in getattr(account, "custom_fields", []):
+                self.add_custom_field_row(cf)
+        else:
+            self.add_custom_field_row()
+
+        self.update_pw_strength()
+
+    def toggle_password(self):
+        if self.fields["Password"].echoMode() == QtWidgets.QLineEdit.EchoMode.Password:
+            self.fields["Password"].setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
+            self.show_btn.setText("Hide password")
+        else:
+            self.fields["Password"].setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+            self.show_btn.setText("Show password")
+
+    def update_pw_strength(self):
+        pw = self.fields["Password"].text()
+        strength = check_password_strength(pw)
+        self.pw_strength.setText(f"Password strength: {strength}")
+
+    def generate_password(self):
+        dlg = PasswordGeneratorDialog(self)
+        if dlg.exec():
+            self.fields["Password"].setText(dlg.get_password())
+
+    def add_custom_field_row(self, cf=None):
+        row = QtWidgets.QHBoxLayout()
+        name = QtWidgets.QLineEdit()
+        value = QtWidgets.QLineEdit()
+        cf_id = None
+        if cf:
+            name.setText(getattr(cf, "name", "") or cf.get("name", ""))
+            value.setText(getattr(cf, "value", "") or cf.get("value", ""))
+            cf_id = getattr(cf, "id", None) if hasattr(cf, "id") else cf.get("id", None)
+        remove_btn = QtWidgets.QPushButton("Remove")
+
+        def remove():
+            if cf_id:
+                self.custom_field_service.delete(cf_id)
+            for i in reversed(range(row.count())):
+                item = row.itemAt(i)
+                if item is not None:
+                    w = item.widget()
+                    if w:
+                        w.setParent(None)
+            self.custom_fields_layout.removeItem(row)
+            try:
+                self.custom_fields.remove((name, value))
+            except ValueError:
+                pass
+            try:
+                self.custom_field_widgets.remove((name, value, cf_id))
+            except ValueError:
+                pass
+
+        remove_btn.clicked.connect(remove)
+        row.addWidget(name)
+        row.addWidget(value)
+        row.addWidget(remove_btn)
+        self.custom_fields_layout.addLayout(row)
+        self.custom_fields.append((name, value))
+        self.custom_field_widgets.append((name, value, cf_id))
+
+    def accept(self):
+        title = self.fields["Title"].text().strip()
+        user_name = self.fields["User name"].text().strip()
+        password = self.fields["Password"].text()
+        url = self.fields["URL"].text()
+        notes = self.fields["Notes"].toPlainText()
+        expiration_date_str = self.fields["Expiration date"].text().strip()
         expiration_date = None
         if expiration_date_str:
             try:
                 expiration_date = datetime.strptime(expiration_date_str, "%d-%m-%Y")
             except ValueError:
-                messagebox.showerror("Error", "Invalid date format. Use DD-MM-YYYY.")
+                QtWidgets.QMessageBox.critical(
+                    self, "Error", "Invalid date format. Use DD-MM-YYYY."
+                )
                 return
         if not title or not user_name or not password:
-            messagebox.showerror("Error", "Title, User name and Password are required.")
-            add_window.grab_set()
-            add_window.focus_set()
-            return
-        new_account = CreateAccountDTO(
-            title=title,
-            user_name=user_name,
-            password=password,
-            url=url,
-            notes=notes,
-            expiration_date=expiration_date,
-        )
-        account = account_service.create(new_account)
-
-        for name_var, value_var in custom_fields:
-            name = name_var.get().strip()
-            value = value_var.get().strip()
-            if name:
-                custom_field_service.create(
-                    CreateCustomFieldDTO(name=name, value=value, account_id=account.id)
-                )
-
-        messagebox.showinfo("Success", "Account added successfully!")
-        add_window.destroy()
-        refresh_callback()
-
-    add_window.bind("<Return>", submit)
-
-
-# --- Dialog for editing an existing account (with custom fields and password generator) ---
-def edit_account_gui(
-    root,
-    account_service: AccountService,
-    custom_field_service: CustomFieldService,
-    account_data,
-    refresh_callback,
-):
-    """
-    Open a modal window for editing an existing account.
-
-    Args:
-        root: The root Tk window.
-        account_service: Service for account operations.
-        custom_field_service: Service for custom field operations.
-        account_data: Dictionary with account data to edit.
-        refresh_callback: Function to call after successful update.
-    """
-    edit_window = tk.Toplevel(root)
-    edit_window.title("Edit Account")
-    edit_window.geometry("480x800")
-    edit_window.grab_set()
-    edit_window.focus_set()
-
-    ttk.Label(
-        edit_window,
-        text='Fields marked with "*" are required.',
-        font=("Arial", 10, "italic"),
-    ).pack(pady=(10, 5))
-
-    expiration_date_value = ""
-    try:
-        if account_data["Expiration date"]:
-            if isinstance(account_data["Expiration date"], datetime):
-                expiration_date_value = account_data["Expiration date"].strftime(
-                    "%d-%m-%Y"
-                )
-            else:
-                expiration_date_value = datetime.strptime(
-                    str(account_data["Expiration date"]), "%Y-%m-%d"
-                ).strftime("%d-%m-%Y")
-    except Exception:
-        expiration_date_value = ""
-
-    fields = [
-        ("Title*", tk.StringVar(value=account_data["Title"])),
-        ("User name*", tk.StringVar(value=account_data["User name"])),
-        ("Password*", tk.StringVar(value=account_data["Password"])),
-        ("URL", tk.StringVar(value=account_data["URL"])),
-        ("Notes", tk.StringVar(value=account_data["Notes"])),
-        (
-            "Expiration date (DD-MM-YYYY)",
-            tk.StringVar(value=expiration_date_value),
-        ),
-    ]
-
-    entries = []
-    show_password = [False]
-    password_strength_label = None  # for later reference
-
-    for idx, (label, var) in enumerate(fields):
-        ttk.Label(edit_window, text=label + ":").pack(pady=2)
-        if label.startswith("Notes"):
-            notes_text = tk.Text(
-                edit_window, font=("TkFixedFont", 9), height=6, width=40, wrap="word"
+            QtWidgets.QMessageBox.critical(
+                self, "Error", "Title, User name and Password are required."
             )
-            notes_text.insert("1.0", var.get())
-            notes_text.pack(pady=2)
-            entries.append(notes_text)
-        else:
-            entry = ttk.Entry(
-                edit_window,
-                textvariable=var,
-                show="*" if "Password" in label else "",
-            )
-            entry.pack(pady=2)
-            entries.append(entry)
-            if label == "Password*":
-                password_entry = entry
-
-                def toggle_password():
-                    if show_password[0]:
-                        password_entry.config(show="*")
-                        show_password[0] = False
-                        show_btn.config(text="Show password")
-                    else:
-                        password_entry.config(show="")
-                        show_password[0] = True
-                        show_btn.config(text="Hide password")
-
-                show_btn = ttk.Button(
-                    edit_window,
-                    text="Show password",
-                    command=toggle_password,
-                )
-                show_btn.pack(pady=(0, 4))
-
-                password_strength_label = ttk.Label(
-                    edit_window, text="Password strength: "
-                )
-                password_strength_label.pack(pady=2)
-
-                def update_password_strength(*args):
-                    password = fields[2][1].get()
-                    strength = check_password_strength(password)
-                    password_strength_label.config(  # type: ignore
-                        text=f"Password strength: {strength}"
-                    )
-
-                fields[2][1].trace_add("write", update_password_strength)
-                update_password_strength()
-
-                def open_generate_password_window():
-                    gen_win = tk.Toplevel(edit_window)
-                    gen_win.title("Generate Password")
-                    gen_win.geometry("300x250")
-                    gen_win.grab_set()
-                    gen_win.focus_set()
-
-                    length_var = tk.IntVar(value=12)
-                    use_digits = tk.BooleanVar(value=True)
-                    use_uppercase = tk.BooleanVar(value=True)
-                    use_special = tk.BooleanVar(value=True)
-
-                    ttk.Label(gen_win, text="Length:").pack()
-                    ttk.Entry(gen_win, textvariable=length_var).pack()
-
-                    ttk.Checkbutton(
-                        gen_win, text="Use digits", variable=use_digits
-                    ).pack()
-                    ttk.Checkbutton(
-                        gen_win, text="Use uppercase", variable=use_uppercase
-                    ).pack()
-                    ttk.Checkbutton(
-                        gen_win, text="Use special chars", variable=use_special
-                    ).pack()
-
-                    def generate_and_set(event=None):
-                        try:
-                            pwd = generate_password(
-                                length=length_var.get(),
-                                use_digits=use_digits.get(),
-                                use_uppercase=use_uppercase.get(),
-                                use_special=use_special.get(),
-                            )
-                            fields[2][1].set(pwd)
-                            gen_win.destroy()
-                            edit_window.grab_set()
-                            edit_window.focus_set()
-                        except Exception as e:
-                            messagebox.showerror("Error", str(e))
-                            gen_win.grab_set()
-                            gen_win.focus_set()
-
-                    ttk.Button(gen_win, text="Generate", command=generate_and_set).pack(
-                        pady=10
-                    )
-                    gen_win.bind("<Return>", generate_and_set)
-
-                ttk.Button(
-                    edit_window,
-                    text="Generate password",
-                    command=open_generate_password_window,
-                ).pack(pady=5)
-
-    custom_fields_label = ttk.Label(
-        edit_window, text="Custom fields", font=("Arial", 10, "bold")
-    )
-    custom_fields_label.pack(pady=(10, 0))
-
-    def add_custom_field_row():
-        row_frame = ttk.Frame(custom_fields_frame)
-        row_frame.pack(fill="x", pady=2)
-        name_var = tk.StringVar()
-        value_var = tk.StringVar()
-
-        def remove_row():
-            custom_fields.remove((name_var, value_var, None))
-            row_frame.destroy()
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        ttk.Entry(row_frame, textvariable=name_var, width=15).pack(side="left", padx=2)
-        ttk.Entry(row_frame, textvariable=value_var, width=25).pack(side="left", padx=2)
-        ttk.Button(row_frame, text="Remove", command=remove_row).pack(
-            side="left", padx=2
-        )
-        custom_fields.append((name_var, value_var, None))
-        canvas.configure(scrollregion=canvas.bbox("all"))
-
-    ttk.Button(edit_window, text="Add custom field", command=add_custom_field_row).pack(
-        pady=(2, 6)
-    )
-
-    custom_fields_outer_frame = ttk.Frame(edit_window)
-    custom_fields_outer_frame.pack(fill="x", padx=10, pady=(0, 2))
-
-    canvas = tk.Canvas(custom_fields_outer_frame, height=100)
-    canvas.pack(side="left", fill="x", expand=True)
-
-    scrollbar = ttk.Scrollbar(
-        custom_fields_outer_frame, orient="vertical", command=canvas.yview
-    )
-    scrollbar.pack(side="right", fill="y")
-
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.config(width=320)
-
-    def on_frame_configure(event):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-
-    custom_fields_frame = ttk.Frame(canvas)
-    canvas.create_window((0, 0), window=custom_fields_frame, anchor="nw")
-
-    custom_fields_frame.bind("<Configure>", on_frame_configure)
-
-    def _on_mousewheel(event):
-        if event.delta:
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        else:
-            if event.num == 4:
-                canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                canvas.yview_scroll(1, "units")
-
-    canvas.bind_all("<MouseWheel>", _on_mousewheel)
-    canvas.bind_all("<Button-4>", _on_mousewheel)
-    canvas.bind_all("<Button-5>", _on_mousewheel)
-
-    custom_fields = []
-
-    existing_custom_fields = []
-    if "custom_fields" in account_data and account_data["custom_fields"]:
-        existing_custom_fields = account_data["custom_fields"]
-
-    for cf in existing_custom_fields:
-        row_frame = ttk.Frame(custom_fields_frame)
-        row_frame.pack(fill="x", pady=2)
-        name = getattr(cf, "name", None) if hasattr(cf, "name") else cf.get("name", "")
-        if not name:
-            name = cf.get("name", "")
-        value = (
-            getattr(cf, "value", None) if hasattr(cf, "value") else cf.get("value", "")
-        )
-        if not value:
-            value = cf.get("value", "")
-        cf_id = getattr(cf, "id", None) if hasattr(cf, "id") else cf.get("id", None)
-        name_var = tk.StringVar(value=name)
-        value_var = tk.StringVar(value=value)
-
-        def make_remove_row(row, pair, cf_id):
-            def remove_row():
-                if cf_id is not None:
-                    custom_field_service.delete(cf_id)
-                custom_fields.remove(pair)
-                row.destroy()
-                canvas.configure(scrollregion=canvas.bbox("all"))
-
-            return remove_row
-
-        ttk.Entry(row_frame, textvariable=name_var, width=15).pack(side="left", padx=2)
-        ttk.Entry(row_frame, textvariable=value_var, width=25).pack(side="left", padx=2)
-        pair = (name_var, value_var, cf_id)
-        ttk.Button(
-            row_frame, text="Remove", command=make_remove_row(row_frame, pair, cf_id)
-        ).pack(side="left", padx=2)
-        custom_fields.append(pair)
-
-    button_frame = ttk.Frame(edit_window)
-    button_frame.pack(pady=4)
-
-    ttk.Button(button_frame, text="Save", command=lambda: submit()).pack(
-        side="left", padx=5, pady=10
-    )
-
-    def submit(event=None):
-        title = fields[0][1].get()
-        user_name = fields[1][1].get()
-        password = fields[2][1].get()
-        url = fields[3][1].get()
-        notes = entries[4].get("1.0", "end").strip()
-        expiration_date_str = fields[5][1].get()
-        expiration_date = None
-        if expiration_date_str:
-            try:
-                expiration_date = datetime.strptime(expiration_date_str, "%d-%m-%Y")
-            except ValueError:
-                messagebox.showerror("Error", "Invalid date format. Use DD-MM-YYYY.")
-                return
-        if not title or not user_name or not password:
-            messagebox.showerror("Error", "Title, User name and Password are required.")
-            edit_window.grab_set()
-            edit_window.focus_set()
             return
-        update_account_dto = UpdateAccountDTO(
-            title=title,
-            user_name=user_name,
-            password=password,
-            url=url,
-            notes=notes,
-            expiration_date=expiration_date,
-        )
-        account_service.update(account_data["Id"], update_account_dto)
-
-        current_custom_fields = []
-        if "custom_fields" in account_data and account_data["custom_fields"]:
-            current_custom_fields = account_data["custom_fields"]
-
-        for name_var, value_var, cf_id in custom_fields:
-            name = name_var.get().strip()
-            value = value_var.get().strip()
-            if name:
+        if self.account:
+            update_account_dto = UpdateAccountDTO(
+                title=title,
+                user_name=user_name,
+                password=password,
+                url=url,
+                notes=notes,
+                expiration_date=expiration_date,
+            )
+            self.account_service.update(self.account.id, update_account_dto)
+            current_custom_fields = []
+            if hasattr(self.account, "custom_fields"):
+                current_custom_fields = self.account.custom_fields
+            existing_ids = set()
+            for cf in current_custom_fields:
+                cf_id = (
+                    getattr(cf, "id", None) if hasattr(cf, "id") else cf.get("id", None)
+                )
                 if cf_id:
-                    custom_field_service.update(
-                        cf_id, UpdateCustomFieldDTO(name=name, value=value)
-                    )
-                else:
-                    custom_field_service.create(
-                        CreateCustomFieldDTO(
-                            name=name, value=value, account_id=account_data["Id"]
+                    existing_ids.add(cf_id)
+            form_ids = set()
+            for name, value, cf_id in self.custom_field_widgets:
+                n = name.text().strip()
+                v = value.text().strip()
+                if n:
+                    if cf_id:
+                        from models.models import UpdateCustomFieldDTO
+
+                        self.custom_field_service.update(
+                            cf_id, UpdateCustomFieldDTO(name=n, value=v)
                         )
+                        form_ids.add(cf_id)
+                    else:
+                        new_cf = self.custom_field_service.create(
+                            CreateCustomFieldDTO(
+                                name=n, value=v, account_id=self.account.id
+                            )
+                        )
+                        form_ids.add(getattr(new_cf, "id", None))
+            to_delete = existing_ids - form_ids
+            for cf_id in to_delete:
+                self.custom_field_service.delete(cf_id)
+        else:
+            new_account = CreateAccountDTO(
+                title=title,
+                user_name=user_name,
+                password=password,
+                url=url,
+                notes=notes,
+                expiration_date=expiration_date,
+            )
+            account = self.account_service.create(new_account)
+            for name, value in self.custom_fields:
+                n = name.text().strip()
+                v = value.text().strip()
+                if n:
+                    self.custom_field_service.create(
+                        CreateCustomFieldDTO(name=n, value=v, account_id=account.id)
                     )
-
-        existing_ids = set()
-        for cf in current_custom_fields:
-            if hasattr(cf, "id"):
-                existing_ids.add(cf.id)
-            elif isinstance(cf, dict) and "id" in cf:
-                existing_ids.add(cf["id"])
-        form_ids = {cf_id for _, _, cf_id in custom_fields if cf_id}
-        to_delete = existing_ids - form_ids
-        for cf_id in to_delete:
-            custom_field_service.delete(cf_id)
-
-        messagebox.showinfo("Success", "Account updated successfully!")
-        edit_window.destroy()
-        refresh_callback()
-
-    edit_window.bind("<Return>", submit)
+        super().accept()
 
 
-# --- Main GUI entry point and application loop ---
+class PasswordGeneratorDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Generate Password")
+        self.setFixedSize(300, 250)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.length = QtWidgets.QSpinBox()
+        self.length.setMinimum(1)
+        self.length.setValue(12)
+        self.use_digits = QtWidgets.QCheckBox("Use digits")
+        self.use_digits.setChecked(True)
+        self.use_uppercase = QtWidgets.QCheckBox("Use uppercase")
+        self.use_uppercase.setChecked(True)
+        self.use_special = QtWidgets.QCheckBox("Use special chars")
+        self.use_special.setChecked(True)
+        layout.addWidget(QtWidgets.QLabel("Length:"))
+        layout.addWidget(self.length)
+        layout.addWidget(self.use_digits)
+        layout.addWidget(self.use_uppercase)
+        layout.addWidget(self.use_special)
+        self.result_line_edit = QtWidgets.QLineEdit()
+        layout.addWidget(self.result_line_edit)
+        btn = QtWidgets.QPushButton("Generate")
+        btn.clicked.connect(self.generate)
+        layout.addWidget(btn)
+        ok_btn = QtWidgets.QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+        layout.addWidget(ok_btn)
+
+    def generate(self):
+        try:
+            pwd = generate_password(
+                length=self.length.value(),
+                use_digits=self.use_digits.isChecked(),
+                use_uppercase=self.use_uppercase.isChecked(),
+                use_special=self.use_special.isChecked(),
+            )
+            self.result_line_edit.setText(pwd)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", str(e))
+
+    def get_password(self):
+        return self.result_line_edit.text()
+
+
 def start_gui_view():
-    """
-    Entry point for the Password Manager GUI.
-    Handles:
-    - Encryption key prompt
-    - Main window and layout
-    - Service and database setup
-    - Table and button setup
-    - Button actions for add/edit/delete
-    - Application close confirmation
-    """
-    root = tk.Tk()
-    root.withdraw()
+    app = QtWidgets.QApplication(sys.argv)
 
-    import tkinter.font as tkfont
-
-    for font_name in (
-        "TkDefaultFont",
-        "TkTextFont",
-        "TkFixedFont",
-        "TkHeadingFont",
-        "TkMenuFont",
-    ):
-        f = tkfont.nametofont(font_name)
-        f.configure(size=f.cget("size") + 2)
-
-    try:
-        icon = tk.PhotoImage(file="assets/icon.png")
-        root.iconphoto(True, icon)
-    except Exception as e:
-        messagebox.showwarning("Warning", f"Could not load icon: {e}")
-
-    encryption_key = ask_for_encryption_key(root)
-    if not encryption_key:
-        messagebox.showerror(
-            "Error", "Encryption key is required to start the application."
+    app_icon = QtGui.QIcon("assets/icon.png")
+    app.setWindowIcon(app_icon)
+    if not check_if_db_exists():
+        QtWidgets.QMessageBox.information(
+            None,
+            "No database found",
+            "No database was found. A new, secure database will be created. The master password you are about to set will be used to encrypt all your data.",
         )
-        root.destroy()
-        return
+    salt = load_salt()
+    if salt is None:
+        salt = create_salt()
+    # Encryption key dialog
+    while True:
+        dlg = MasterPasswordDialog()
+        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            master_password = dlg.get_key()
+            encryption_key = str(derive_key(master_password, salt))
+            if check_if_db_exists():
+                if is_key_valid(encryption_key):
+                    break
+                else:
+                    QtWidgets.QMessageBox.critical(
+                        None,
+                        "Error",
+                        "Invalid master password. Please check your master password and try again.",
+                    )
+            else:
+                break
+        else:
+            sys.exit(0)
 
-    root.deiconify()
-    root.title("Password Manager")
-    root.geometry("740x400")
-    try:
-        with get_db_session() as db_session:
-            db = db_session
-            Account, CustomField = create_database(encryption_key)
-
+    with get_db_session() as db_session:
+        db = db_session
+        Account, CustomField = create_database(encryption_key)
         account_service = AccountService(db, Account)
         custom_field_service = CustomFieldService(db, CustomField, Account)
-        check_secret_key(account_service)
-    except InvalidPaddingError:
-        messagebox.showwarning("Invalid secret key", "Please provide a valid key.")
-        sys.exit(0)
 
-    main_frame = ttk.Frame(root)
-    main_frame.pack(fill="both", expand=True)
+    main = MainWindow(account_service, custom_field_service)
+    main.show()
 
-    table_frame = ttk.Frame(main_frame)
-    table_frame.pack(fill="both", expand=True, pady=0, padx=0)
-
-    button_frame = ttk.Frame(main_frame)
-    button_frame.pack(pady=(0, 20))
-
-    tree = display_accounts(
-        table_frame, account_service, custom_field_service, "", "", ""
-    )
-
-    def refresh_accounts():
-        nonlocal tree
-
-        filter_title = filter_user_name = filter_url = ""
-        for widget in table_frame.winfo_children():
-            if isinstance(widget, ttk.Frame):
-                entries = [
-                    child
-                    for child in widget.winfo_children()
-                    if isinstance(child, ttk.Entry)
-                ]
-                if len(entries) >= 3:
-                    filter_title = entries[0].get()
-                    filter_user_name = entries[1].get()
-                    filter_url = entries[2].get()
-        tree = display_accounts(
-            table_frame,
-            account_service,
-            custom_field_service,
-            filter_title,
-            filter_user_name,
-            filter_url,
-        )
-
-    def on_edit_account_button():
-        sel = tree.selection()
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                account = account_service.get_by_id(values[0])
-
-                account_data = {
-                    "Id": account.id,
-                    "Title": account.title,
-                    "User name": account.user_name,
-                    "Password": account.password,
-                    "URL": account.url,
-                    "Notes": account.notes,
-                    "Expiration date": account.expiration_date,
-                    "custom_fields": list(account.custom_fields),
-                }
-                edit_account_gui(
-                    root,
-                    account_service,
-                    custom_field_service,
-                    account_data,
-                    refresh_accounts,
-                )
-            else:
-                messagebox.showwarning("Warning", "No account selected.")
-        else:
-            messagebox.showwarning("Warning", "No account selected.")
-
-    def on_delete_account_button():
-        sel = tree.selection()
-        if sel:
-            values = tree.item(sel[0])["values"]
-            if values:
-                confirm = messagebox.askyesno(
-                    "Confirm", "Are you sure you want to delete this account?"
-                )
-                if confirm:
-                    account_service.delete(values[0])
-                    refresh_accounts()
-        else:
-            messagebox.showwarning("Warning", "No account selected.")
-
-    ttk.Button(
-        button_frame,
-        text="Add Account",
-        command=lambda: add_account_gui(
-            root, account_service, custom_field_service, refresh_accounts
-        ),
-    ).pack(side="left", padx=10)
-
-    ttk.Button(
-        button_frame,
-        text="Edit",
-        command=on_edit_account_button,
-    ).pack(side="left", padx=10)
-
-    ttk.Button(
-        button_frame,
-        text="Delete",
-        command=on_delete_account_button,
-    ).pack(side="left", padx=10)
-
-    def on_close():
-        if messagebox.askokcancel(
-            "Exit", "Are you sure you want to exit the application?"
-        ):
-            root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", on_close)
-
+    # Add account if DB is empty
     if check_if_db_is_empty(account_service):
-        messagebox.showinfo("Info", "No accounts found. Please add an account.")
-        add_account_gui(root, account_service, custom_field_service, refresh_accounts)
+        QtWidgets.QMessageBox.information(
+            main, "Info", "No accounts found. Please add an account."
+        )
+        main.add_account()
 
-    root.mainloop()
+    app.installEventFilter(EscCloseFilter(main))
+
+    sys.exit(app.exec())
+
+
+class EscCloseFilter(QtCore.QObject):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
+    def eventFilter(self, a0, a1):
+        if (
+            a1 is not None
+            and a1.type() == QtCore.QEvent.Type.KeyPress
+            and isinstance(a1, QtGui.QKeyEvent)
+        ):
+            key_event = a1
+            if key_event.key() == QtCore.Qt.Key.Key_Escape:
+                self.window.close()
+                return True
+        return False

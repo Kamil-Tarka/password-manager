@@ -14,8 +14,13 @@ import string
 from typing import Generator
 
 import pyperclip
-from sqlalchemy.orm import Session
-from sqlalchemy_utils.types.encrypted.encrypted_type import InvalidCiphertextError
+from sqlalchemy import Integer, String
+from sqlalchemy.orm import Mapped, Session, declarative_base, mapped_column
+from sqlalchemy_utils import StringEncryptedType
+from sqlalchemy_utils.types.encrypted.encrypted_type import (
+    AesGcmEngine,
+    InvalidCiphertextError,
+)
 
 from database_settings import Base, SessionLocal, engine
 from models.entities import get_account_entity, get_custom_field_entity
@@ -53,6 +58,20 @@ def create_database(secret_key: str):
     Base.metadata.create_all(bind=engine)
 
     return Account, CustomField
+
+
+def check_if_db_exists() -> bool:
+    """
+    Check if the database exists.
+
+    Returns:
+        bool: True if the database exists, False otherwise.
+    """
+    try:
+        with open("passwords.db", "rb") as f:
+            return True
+    except FileNotFoundError:
+        return False
 
 
 def check_if_db_is_empty(account_service: AccountService) -> bool:
@@ -97,7 +116,7 @@ def derive_key(password: str, salt: bytes) -> bytes:
     return key
 
 
-def check_secret_key(account_service: AccountService) -> bool:
+def is_key_valid(encryption_key: str) -> bool:
     """
     Check if the provided secret key is valid by attempting to fetch accounts.
 
@@ -107,11 +126,26 @@ def check_secret_key(account_service: AccountService) -> bool:
     Returns:
         bool: True if the key is valid, otherwise False.
     """
+    TempBase = declarative_base()
+
+    class TempAccount(TempBase):
+        __tablename__ = "account"
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        title: Mapped[str] = mapped_column(
+            StringEncryptedType(String, encryption_key, AesGcmEngine, "pkcs5")
+        )
+
+    db = SessionLocal()
     try:
-        account_service.check_if_any_account()
+        db.query(TempAccount).first()
+
+        return True
     except InvalidCiphertextError:
         return False
-    return True
+    except Exception:
+        return False
+    finally:
+        db.close()
 
 
 def check_password_strength(password: str) -> str:
@@ -194,5 +228,4 @@ def generate_password(
         raise ValueError("At least one character type must be selected")
 
     password = "".join(secrets.choice(character_pool) for _ in range(length))
-    return password
     return password
