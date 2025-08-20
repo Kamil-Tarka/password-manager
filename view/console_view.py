@@ -1,3 +1,4 @@
+import getpass
 import os
 import sys
 from datetime import datetime
@@ -36,7 +37,7 @@ def ask_for_master_password(salt):
         str: The entered master password.
     """
     print("Please enter the master password: ")
-    master_password = input()
+    master_password = getpass.getpass("Master password: ")
     encryption_key = str(derive_key(master_password, salt))
     return encryption_key
 
@@ -226,7 +227,7 @@ def add_new_account(account_service: AccountService):
         use_special = input("Use special characters? (y/n): ").lower() == "y"
         password = generate_password(length, use_digits, use_uppercase, use_special)
     else:
-        password = str(input("Please provide password: "))
+        password = getpass.getpass("Please provide password: ")
 
     password_strengh = check_password_strength(password)
     print(f"This password is {password_strengh.lower()}")
@@ -283,7 +284,7 @@ def edit_account_data(account, account_service: AccountService):
         use_special = input("Use special characters? (y/n): ").lower() == "y"
         password = generate_password(length, use_digits, use_uppercase, use_special)
     else:
-        password = str(input("Please provide password: "))
+        password = getpass.getpass("Please provide password: ")
     if password:
         password_strengh = check_password_strength(password)
         print(f"This password is {password_strengh.lower()}")
@@ -467,9 +468,10 @@ def start_console_view():
     - Main menu loop for account management
     - Error handling for invalid keys and missing accounts
     """
-    print("Program run in command line mode")
     clear_console()
-    print("Program run in command line mode")
+    print(
+        "Program run in command line mode\nPasswords inputs won't show any text that you provide in console."
+    )
     salt = load_salt()
     if salt is None:
         salt = create_salt()
