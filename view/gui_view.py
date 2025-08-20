@@ -1,6 +1,9 @@
 import sys
+import threading
+import time
 from datetime import datetime
 
+import pyperclip
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from models.models import CreateAccountDTO, CreateCustomFieldDTO, UpdateAccountDTO
@@ -330,9 +333,16 @@ class MainWindow(QtWidgets.QMainWindow):
             menu.exec(self.mapToGlobal(pos))
 
     def copy_to_clipboard(self, value):
+        def clear_clipboard():
+            time.sleep(10)
+            pyperclip.copy("")
+
         clipboard = QtWidgets.QApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(str(value))
+            clear_thread = threading.Thread(target=clear_clipboard)
+            clear_thread.daemon = True
+            clear_thread.start()
 
     def on_section_clicked(self, idx):
         if self.last_sorted_col == idx:

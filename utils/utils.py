@@ -11,6 +11,8 @@ import os
 import re
 import secrets
 import string
+import threading
+import time
 from typing import Generator
 
 import pyperclip
@@ -198,12 +200,20 @@ def check_password_strength(password: str) -> str:
 
 def coppy_to_clipboard(text: str):
     """
-    Copy the provided text to the system clipboard.
+    Copy the provided text to the system clipboard. Clipboard will be cleared after 10 seconds.
 
     Args:
         text (str): The text to copy.
     """
+
+    def clear_clipboard():
+        time.sleep(10)
+        pyperclip.copy("")
+
     pyperclip.copy(text)
+    clear_thread = threading.Thread(target=clear_clipboard)
+    clear_thread.daemon = True
+    clear_thread.start()
 
 
 def generate_password(
