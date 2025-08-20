@@ -29,6 +29,46 @@ from utils.utils import (
     load_salt,
 )
 
+# ANSI color codes for console coloring
+RED = "\033[31m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
+
+
+def _get_expiration_color(expiration_date):
+    """Return color code (RED/YELLOW) based on expiration_date or None."""
+    if not expiration_date:
+        return None
+    try:
+        if isinstance(expiration_date, datetime):
+            exp_date = expiration_date.date()
+        else:
+            # Try common formats
+            try:
+                exp_date = datetime.strptime(str(expiration_date), "%d-%m-%Y").date()
+            except Exception:
+                try:
+                    exp_date = datetime.strptime(
+                        str(expiration_date), "%Y-%m-%d"
+                    ).date()
+                except Exception:
+                    return None
+    except Exception:
+        return None
+    today = datetime.now().date()
+    delta_days = (exp_date - today).days
+    if delta_days < 0:
+        return RED
+    if delta_days <= 10:
+        return YELLOW
+    return None
+
+
+def _color_text(text, color):
+    if not color:
+        return text
+    return f"{color}{text}{RESET}"
+
 
 def ask_for_master_password(salt):
     """
@@ -73,14 +113,16 @@ def print_account_data(account):
     Args:
         account: The account object to display.
     """
+    color = _get_expiration_color(getattr(account, "expiration_date", None))
+
     data = [
-        ["Id", account.id],
-        ["Title", account.title],
-        ["User name", account.user_name],
-        ["Password", "*" * len(account.password)],
-        ["URL", account.url],
-        ["Notes", account.notes],
-        ["Expiration Date", account.expiration_date],
+        ["Id", _color_text(str(account.id), color)],
+        ["Title", _color_text(str(account.title or ""), color)],
+        ["User name", _color_text(str(account.user_name or ""), color)],
+        ["Password", _color_text("*" * len(account.password or ""), color)],
+        ["URL", _color_text(str(account.url or ""), color)],
+        ["Notes", _color_text(str(account.notes or ""), color)],
+        ["Expiration Date", _color_text(str(account.expiration_date or ""), color)],
     ]
 
     print("Account:")
@@ -88,13 +130,22 @@ def print_account_data(account):
 
     if hasattr(account, "custom_fields") and account.custom_fields:
         custom_fields_data = [
-            [field.id, field.name, field.value] for field in account.custom_fields
+            [
+                _color_text(str(field.id), color),
+                _color_text(str(field.name), color),
+                _color_text(str(field.value), color),
+            ]
+            for field in account.custom_fields
         ]
         print("\nCustom Fields:")
         print(
             tabulate(
                 custom_fields_data,
-                headers=["Id", "Name", "Value"],
+                headers=[
+                    _color_text("Id", color),
+                    _color_text("Name", color),
+                    _color_text("Value", color),
+                ],
                 tablefmt="fancy_grid",
             )
         )
@@ -116,18 +167,21 @@ def list_all_accounts(account_service: AccountService):
     if not entries:
         print("No accounts found.")
         return None
-    table_data = [
-        [
-            entry.id,
-            entry.title,
-            entry.user_name,
-            "*" * len(entry.password),
-            entry.url,
-            entry.notes,
-            entry.expiration_date,
+
+    table_data = []
+    for entry in entries:
+        color = _get_expiration_color(getattr(entry, "expiration_date", None))
+        row = [
+            _color_text(str(entry.id), color),
+            _color_text(str(entry.title or ""), color),
+            _color_text(str(entry.user_name or ""), color),
+            _color_text("*" * len(entry.password or ""), color),
+            _color_text(str(entry.url or ""), color),
+            _color_text(str(entry.notes or ""), color),
+            _color_text(str(entry.expiration_date or ""), color),
         ]
-        for entry in entries
-    ]
+        table_data.append(row)
+
     headers = [
         "Id",
         "Title",
@@ -155,13 +209,22 @@ def select_field_by_name(account):
         "To coppy account data to clipboard, please provide field name, to copy custom field, please provide 'custom field' first"
     )
     field_name = input("Please provide field name: ").lower()
+    if field_name == "" or field_name is None:
+        print("Field name cannot be empty, please provide field name.")
+        return None
     if " " in field_name:
         field_name = field_name.replace(" ", "_")
     if hasattr(account, field_name):
         return getattr(account, field_name)
     elif field_name.lower() == "custom_field" and account.custom_fields:
         custom_field_id = int(input("Please provide custom field id to coppy: "))
+        if custom_field_id is None or custom_field_id < 0:
+            print("Invalid custom field id. Please enter a positive number.")
+            return None
         field_name = input("Please provide custom field name: ").lower()
+        if field_name == "" or field_name is None:
+            print("Field name cannot be empty, please provide field name.")
+            return None
         custom_fields = account.custom_fields
         custom_field = next(
             (obj for obj in custom_fields if obj.id == custom_field_id), None
@@ -184,7 +247,11 @@ def select_account(account_service: AccountService):
     Args:
         account_service: Service for account operations.
     """
-    account_id = int(input("Provide account id: "))
+    try:
+        account_id = int(input("Provide account id: "))
+    except ValueError:
+        print("Invalid account id. Please enter a number.")
+        return None
     try:
         account = account_service.get_by_id(account_id)
     except NotFoundAccountException as e:
@@ -218,7 +285,13 @@ def add_new_account(account_service: AccountService):
         The created account object.
     """
     title = str(input("Please provide account title: "))
+    if title == "" or title is None:
+        print("Title cannot be empty, please provide title.")
+        return None
     user_name = str(input("Please provide user name: "))
+    if user_name == "" or user_name is None:
+        print("User name cannot be empty, please provide user name.")
+        return None
     ask_generate_password = input("Do you want to generate password? (y/n): ")
     if ask_generate_password.lower() == "y":
         length = int(input("Please provide password length: "))
@@ -228,6 +301,9 @@ def add_new_account(account_service: AccountService):
         password = generate_password(length, use_digits, use_uppercase, use_special)
     else:
         password = getpass.getpass("Please provide password: ")
+        if password == "" or password is None:
+            print("Password cannot be empty, please provide password.")
+            return None
 
     password_strengh = check_password_strength(password)
     print(f"This password is {password_strengh.lower()}")
@@ -330,7 +406,13 @@ def add_new_custom_field(account, custom_field_service: CustomFieldService):
     """
     print("Provide custom field data")
     name = input("Please provide custom field name: ")
-    value = input("Please provide custom vield value: ")
+    if name == "" or name is None:
+        print("Custom field name cannot be empty, please provide name.")
+        return None
+    value = input("Please provide custom field value: ")
+    if value == "" or value is None:
+        print("Custom field value cannot be empty, please provide value.")
+        return None
     new_custom_field_dto = CreateCustomFieldDTO(
         name=name, value=value, account_id=account.id
     )
@@ -350,7 +432,11 @@ def update_custom_field(account, custom_field_service: CustomFieldService):
     Returns:
         The updated custom field object.
     """
-    cusotm_field_id = int(input("Provide custom field Id: "))
+    try:
+        cusotm_field_id = int(input("Provide custom field Id: "))
+    except ValueError:
+        print("Invalid custom field id. Please enter a number.")
+        return None
     try:
         custom_field = custom_field_service.get_by_id(cusotm_field_id)
     except NotFoundAccountException as e:
@@ -381,7 +467,11 @@ def delete_custom_field(account, custom_field_service: CustomFieldService):
     Returns:
         Result of the delete operation.
     """
-    cusotm_field_id = int(input("Provide custom field Id: "))
+    try:
+        cusotm_field_id = int(input("Provide custom field Id: "))
+    except ValueError:
+        print("Invalid custom field id. Please enter a number.")
+        return None
     try:
         custom_field = custom_field_service.get_by_id(cusotm_field_id)
     except NotFoundAccountException as e:
@@ -405,7 +495,11 @@ def update_account(
         account_service: Service for account operations.
         custom_field_service: Service for custom field operations.
     """
-    account_id = int(input("Provide account id to update: "))
+    try:
+        account_id = int(input("Provide account id to update: "))
+    except ValueError:
+        print("Invalid account id. Please enter a number.")
+        return None
     try:
         account = account_service.get_by_id(account_id)
     except NotFoundAccountException as e:
@@ -441,7 +535,11 @@ def delete_account(account_service: AccountService):
     Returns:
         bool: True if deleted, False otherwise.
     """
-    account_id = int(input("Please provide account id: "))
+    try:
+        account_id = int(input("Please provide account id: "))
+    except ValueError:
+        print("Invalid account id. Please enter a number.")
+        return None
     result = False
     try:
         account = account_service.get_by_id(account_id)

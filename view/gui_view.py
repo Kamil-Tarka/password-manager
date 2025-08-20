@@ -86,6 +86,7 @@ class AccountTableModel(QtCore.QAbstractTableModel):
             return None
         acc = self.accounts[index.row()]
         col = index.column()
+        # Display values
         if role == QtCore.Qt.ItemDataRole.DisplayRole:
             if col == 0:
                 return acc.id
@@ -105,6 +106,27 @@ class AccountTableModel(QtCore.QAbstractTableModel):
                     return str(val)
                 else:
                     return ""
+
+        # Foreground coloring based on expiration date
+        if role == QtCore.Qt.ItemDataRole.ForegroundRole:
+            val = getattr(acc, "expiration_date", None)
+            if val is None or val == "":
+                return None
+            try:
+                if isinstance(val, datetime):
+                    exp_date = val.date()
+                else:
+                    exp_date = datetime.strptime(str(val), "%d-%m-%Y").date()
+            except Exception:
+                return None
+            today = datetime.now().date()
+            delta_days = (exp_date - today).days
+            if delta_days < 0:
+                return QtGui.QBrush(QtGui.QColor("#990000"))  # dark red for expired
+            if delta_days <= 10:
+                return QtGui.QBrush(
+                    QtGui.QColor("#CC6600")
+                )  # dark orange for soon-to-expire
         return None
 
     def headerData(self, section, orientation, role=QtCore.Qt.ItemDataRole.DisplayRole):
