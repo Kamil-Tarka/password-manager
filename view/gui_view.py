@@ -97,8 +97,6 @@ class AccountTableModel(QtCore.QAbstractTableModel):
             elif col == 3:
                 return acc.url
             elif col == 4:
-                return acc.notes
-            elif col == 5:
                 val = acc.expiration_date
                 if isinstance(val, datetime):
                     return val.strftime("%d-%m-%Y")
@@ -106,6 +104,8 @@ class AccountTableModel(QtCore.QAbstractTableModel):
                     return str(val)
                 else:
                     return ""
+            elif col == 5:
+                return acc.notes
 
         # Foreground coloring based on expiration date
         if role == QtCore.Qt.ItemDataRole.ForegroundRole:
@@ -144,8 +144,8 @@ class AccountTableModel(QtCore.QAbstractTableModel):
             1: "title",
             2: "user_name",
             3: "url",
-            4: "notes",
-            5: "expiration_date",
+            4: "expiration_date",
+            5: "notes",
         }
         attr = col_map.get(column, "id")
         if attr == "expiration_date":
@@ -191,7 +191,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.account_service = account_service
         self.custom_field_service = custom_field_service
         self.setWindowTitle("Password Manager")
-        self.setGeometry(100, 100, 500, 400)
+        self.setGeometry(100, 100, 1024, 768)
         self.central = QtWidgets.QWidget()
         self.setCentralWidget(self.central)
         self.main_layout = QtWidgets.QVBoxLayout(self.central)
@@ -216,8 +216,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filter_user.textChanged.connect(self.refresh_table)
         self.filter_url.textChanged.connect(self.refresh_table)
 
+        # Buttons
+        btn_layout = QtWidgets.QHBoxLayout()
+        self.add_btn = QtWidgets.QPushButton("Add Account")
+        self.edit_btn = QtWidgets.QPushButton("Edit")
+        self.del_btn = QtWidgets.QPushButton("Delete")
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.edit_btn)
+        btn_layout.addWidget(self.del_btn)
+        self.main_layout.addLayout(btn_layout)
+        self.add_btn.clicked.connect(self.add_account)
+        self.edit_btn.clicked.connect(self.edit_account)
+        self.del_btn.clicked.connect(self.delete_account)
+
         # Table
-        self.headers = ["Id", "Title", "User name", "URL", "Notes", "Expiration date"]
+        self.headers = ["Id", "Title", "User name", "URL", "Expiration date", "Notes"]
         self.table = QtWidgets.QTableView()
         self.main_layout.addWidget(self.table)
         self.table.setSelectionBehavior(
@@ -231,19 +244,6 @@ class MainWindow(QtWidgets.QMainWindow):
         header = self.table.horizontalHeader()
         if header is not None:
             header.sectionClicked.connect(self.on_section_clicked)
-
-        # Buttons
-        btn_layout = QtWidgets.QHBoxLayout()
-        self.add_btn = QtWidgets.QPushButton("Add Account")
-        self.edit_btn = QtWidgets.QPushButton("Edit")
-        self.del_btn = QtWidgets.QPushButton("Delete")
-        btn_layout.addWidget(self.add_btn)
-        btn_layout.addWidget(self.edit_btn)
-        btn_layout.addWidget(self.del_btn)
-        self.main_layout.addLayout(btn_layout)
-        self.add_btn.clicked.connect(self.add_account)
-        self.edit_btn.clicked.connect(self.edit_account)
-        self.del_btn.clicked.connect(self.delete_account)
 
         self.last_sorted_col = None
         self.last_sort_order = QtCore.Qt.SortOrder.AscendingOrder
@@ -272,6 +272,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model = AccountTableModel(accounts, self.headers)
         self.table.setModel(self.model)
         self.table.resizeColumnsToContents()
+
         if self.last_sorted_col is not None:
             self.table.sortByColumn(self.last_sorted_col, self.last_sort_order)
         else:
@@ -329,7 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addAction("Edit account", self.edit_account)
         menu.addAction("Delete account", self.delete_account)
         # Custom fields submenu
-        other_data_menu = QtWidgets.QMenu("Other data", self)
+        other_data_menu = QtWidgets.QMenu("Coppy custom field", self)
         if acc and acc.custom_fields:
             for cf in acc.custom_fields:
                 cf_name = getattr(cf, "name", None) or (
@@ -677,7 +678,6 @@ class EscCloseFilter(QtCore.QObject):
 
 def start_gui_view():
     app = QtWidgets.QApplication(sys.argv)
-
     app_icon = QtGui.QIcon("assets/icon.png")
     app.setWindowIcon(app_icon)
     if not check_if_db_exists():
