@@ -678,6 +678,8 @@ class EscCloseFilter(QtCore.QObject):
 
 def start_gui_view():
     app = QtWidgets.QApplication(sys.argv)
+    font = QtGui.QFont("Arial", 12)
+    app.setFont(font)
     app_icon = QtGui.QIcon("assets/icon.png")
     app.setWindowIcon(app_icon)
     if not check_if_db_exists():
@@ -690,20 +692,30 @@ def start_gui_view():
     if salt is None:
         salt = create_salt()
     # Encryption key dialog
+    key_input_counter: int = 0
     while True:
         dlg = MasterPasswordDialog()
         if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            key_input_counter += 1
             master_password = dlg.get_key()
             encryption_key = str(derive_key(master_password, salt))
             if check_if_db_exists():
                 if is_key_valid(encryption_key):
                     break
                 else:
-                    QtWidgets.QMessageBox.critical(
-                        None,
-                        "Error",
-                        "Invalid master password. Please check your master password and try again.",
-                    )
+                    if key_input_counter >= 3:
+                        QtWidgets.QMessageBox.critical(
+                            None,
+                            "Error",
+                            "Invalid master password. Maximum attempts reached. Exiting.",
+                        )
+                        sys.exit(0)
+                    else:
+                        QtWidgets.QMessageBox.critical(
+                            None,
+                            "Error",
+                            "Invalid master password. Please check your master password and try again.",
+                        )
             else:
                 break
         else:
